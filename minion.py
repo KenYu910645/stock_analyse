@@ -29,6 +29,7 @@ import mplfinance as mpf
 
 # Local import
 from model import Minion
+from config import cfg
 
 #######################
 ### Global variable ###
@@ -41,6 +42,30 @@ BATCH_SIZE = 32
 NUM_EPOCHS = 50
 INPUT_DAYS = 5 # 10 # 5
 NUM_FEATURE = 5  # 'Open', 'High', 'Low', 'Close', 'Capacity'
+
+def draw_kbar(df, out_fn):
+    '''
+    draw_kbar
+    '''
+    # Verify that the DataFrame index is a DatetimeIndex
+    if not isinstance(df.index, pd.DatetimeIndex):
+        raise TypeError("Expect data.index as DatetimeIndex")
+
+    # Rename 'Turnover' to 'Volume' for mplfinance
+    df.rename(columns={'Turnover': 'Volume'}, inplace=True)
+
+    # Customizing the appearance: Set up colors and style
+    mc = mpf.make_marketcolors(up='r', down='g', inherit=True)
+    s = mpf.make_mpf_style(base_mpf_style='yahoo', marketcolors=mc)
+
+    # Prepare plotting parameters
+    kwargs = dict(type='candle', mav=(5, 20, 60), volume=True,
+                figratio=(10, 8), figscale=0.75,
+                title=out_fn, style=s,
+                savefig=f'plot/{out_fn}')
+
+    # Plot the K-bar (candlestick) chart
+    mpf.plot(df, **kwargs)
 
 def fetch_stock_data(stock_tar):
     """
@@ -72,9 +97,7 @@ def fetch_stock_data(stock_tar):
     ]
 
     df = pd.DataFrame(columns=name_attribute,
-                            data=target_price)
-    df['Date'] = pd.to_datetime(df['Date'])
-    df.set_index('Date', inplace=True)
+                      data=target_price)
 
     return df
 
@@ -88,7 +111,7 @@ def preprocess(df):
 
     # Normalize Capacity(總成交股數)
     capacity_norm = (df['Capacity'] - df['Capacity'].min()) / \
-                          (df['Capacity'].max() - df['Capacity'].min())
+                    (df['Capacity'].max() - df['Capacity'].min())
 
     # Calculate price offsets and discard the first day
     for i in range(1, len(df) - INPUT_DAYS):
@@ -122,73 +145,85 @@ def preprocess(df):
 
 if __name__ == "__main__":
     # Get use input arguments
-    parser = argparse.ArgumentParser(
-             description="Fetch and analyse stock trading data.")
-    parser.add_argument('stock_tar', type=str,
-                        help="The stock code to query, e.g.0050")
-    args = parser.parse_args()
+    # parser = argparse.ArgumentParser(
+    #          description="Fetch and analyse stock trading data.")
+    # parser.add_argument('stock_tar', type=str,
+    #                     help="The stock code to query, e.g.0050")
+    # args = parser.parse_args()
 
-    # Get output file name
-    start_time = f"{START_YEAR}{str(START_MONTH).zfill(2)}"
-    end_time = datetime.now().strftime("%Y%m")
-    fn_out = f'./data/{args.stock_tar}_{start_time}_to_{end_time}.csv'
+    all_X = []
+    all_y = []
+    for stock_tar in cfg.stock_list:
 
-    # Get stock price by webcrawler
-    if os.path.exists(fn_out):
-        print(f"The file {fn_out} already exists. Skipping data fetch.")
+        # Get output file name
+        start_time = f"{START_YEAR}{str(START_MONTH).zfill(2)}"
+        end_time = datetime.now().strftime("%Y%m")
+        fn_out = f'./data/{stock_tar}_{start_time}_to_{end_time}.csv'
 
-        # Get data/*.csv
-        df_stock = pd.read_csv(fn_out, parse_dates=['Date'])
-        df_stock['Date'] = pd.to_datetime(df_stock['Date'])
-        df_stock.set_index('Date', inplace=True)
+        # Get stock price by webcrawler
+        if os.path.exists(fn_out):
+            print(f"Stock data {fn_out} already exists."
+                  "Skipping data fetch.")
 
-    else:
-        # Web Crawling data from TWSE
-        try:
-            df_stock = fetch_stock_data(args.stock_tar)
-        except KeyError:
-            print(f"stock index: {args.stock_tar} doesn't exist.")
-            sys.exit(1)
+            # Get data/*.csv
+            df_stock = pd.read_csv(fn_out, parse_dates=['Date'])
 
-        # Save DataFrame as CSV
-        df_stock.to_csv(fn_out, index=False)
-        print(f"Data fetched and saved to {fn_out}.")
-        print(f"Fail to fetch stock target: {args.stock_tar}")
+        else:
+            # Web Crawling data from TWSE
+            try:
+                df_stock = fetch_stock_data(stock_tar)
+            except KeyError:
+                print(f"stock index: {stock_tar} doesn't exist.")
+                sys.exit(1)
 
-    #######################
-    ### Draw K bar plot ###
-    #######################
-    # Verify that the DataFrame index is a DatetimeIndex
-    if not isinstance(df_stock.index, pd.DatetimeIndex):
-        raise TypeError("Expect data.index as DatetimeIndex")
+            # Check if 'Date' column exists
+            if 'Date' not in df_stock.columns:
+                # Copy 'Date' from backup_df to stock_target
+                backup_fn = f'./data/0050_{start_time}_to_{end_time}.csv'
+                if os.path.exists(backup_fn):
+                    # Read backup_df
+                    backup_df = pd.read_csv(backup_fn, parse_dates=['Date'])
+                    backup_df.set_index('Date', inplace=True)
+                    # Copy 'Date'
+                    df_stock['Date'] = backup_df['Date']
+                else:
+                    print(f"Backup file {backup_fn} not found.")
+                    sys.exit(1)
 
-    # Rename 'Turnover' to 'Volume' for mplfinance
-    df_stock.rename(columns={'Turnover': 'Volume'}, inplace=True)
+            # Save DataFrame as CSV
+            df_stock.to_csv(fn_out, index=False)
+            print(f"Data fetched and saved to {fn_out}.")
+            print(f"Fail to fetch stock target: {stock_tar}")
 
-    # Customizing the appearance: Set up colors and style
-    mc = mpf.make_marketcolors(up='r', down='g', inherit=True)
-    s = mpf.make_mpf_style(base_mpf_style='yahoo', marketcolors=mc)
+        #######################
+        ### Draw K bar plot ###
+        #######################
+        if cfg.is_plot:
+            # Normalize date format
+            df_stock['Date'] = pd.to_datetime(df_stock['Date'])
+            # Set 'Date' as index
+            df_stock.set_index('Date', inplace=True)
+            # Draw K-bar chart
+            draw_kbar(df_stock,
+                      f"{stock_tar}_{start_time}_to_{end_time}")
 
-    # Prepare plotting parameters
-    kwargs = dict(type='candle', mav=(5, 20, 60), volume=True,
-                  figratio=(10, 8), figscale=0.75,
-                  title=f'{args.stock_tar} Stock Price', style=s,
-                  savefig=f'plot/{args.stock_tar}_{start_time}_to_{end_time}')
-
-    # Plot the K-bar (candlestick) chart
-    mpf.plot(df_stock, **kwargs)
+        #####################
+        ### Preprocessing ###
+        #####################
+        X, y = preprocess(df_stock)
+        all_X.append(X)
+        all_y.append(y)
 
     ######################
     ### Training model ###
     ######################
-    X, y = preprocess(df_stock)
-    X = X.astype(np.float32)
-    y = y.astype(np.float32)
+    all_X = np.concatenate(all_X, axis=0)
+    all_y = np.concatenate(all_y, axis=0)
 
     # Split data into training(80%) and validation(20%) sets
-    X_train, X_val, y_train, y_val = train_test_split(X, y,
-                                                      test_size=0.2,
-                                                      random_state=42)
+    X_train, X_val, y_train, y_val = train_test_split(all_X, all_y,
+                                                    test_size=0.2,
+                                                    random_state=42)
 
     # Create DataLoader for training and validation sets
     train_dataset = TensorDataset(torch.from_numpy(X_train),
@@ -239,8 +274,8 @@ if __name__ == "__main__":
         val_loss /= len(val_loader.dataset)
 
         print(f"Epoch {epoch+1}/{NUM_EPOCHS},"
-              f"Training Loss: {train_loss:.4f},"
-              f"Validation Loss: {val_loss:.4f}")
+            f"Training Loss: {train_loss:.4f},"
+            f"Validation Loss: {val_loss:.4f}")
 
     ########################
     ### Model Evaluation ###
