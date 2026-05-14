@@ -13,6 +13,7 @@ from plotly.subplots import make_subplots
 
 
 PLOT_DIR = './plot'
+METADATA_PATH = './data/stock_metadata.csv'
 REQUIRED_COLUMNS = [
     'Date',
     'Open',
@@ -21,6 +22,49 @@ REQUIRED_COLUMNS = [
     'Close',
     'Capacity',
 ]
+MOVING_AVERAGES = [
+    (5, '#f59e0b'),
+    (10, '#2563eb'),
+    (20, '#7c3aed'),
+    (60, '#111827'),
+]
+
+
+def get_stock_code_from_csv_path(csv_path):
+    '''
+    Extract stock code from filenames like 2308_202005_to_202605.csv.
+    '''
+    return Path(csv_path).stem.split('_')[0]
+
+
+def read_stock_metadata(metadata_path=METADATA_PATH):
+    '''
+    Read stock metadata when available.
+    '''
+    if not os.path.exists(metadata_path):
+        return pd.DataFrame()
+
+    return pd.read_csv(metadata_path, dtype={'Code': str})
+
+
+def get_stock_title(csv_path, metadata_path=METADATA_PATH):
+    '''
+    Build a chart title that includes stock code, Chinese name, and group.
+    '''
+    stock_code = get_stock_code_from_csv_path(csv_path)
+    title_parts = [stock_code]
+    metadata_df = read_stock_metadata(metadata_path)
+
+    if not metadata_df.empty and 'Code' in metadata_df.columns:
+        matched_rows = metadata_df[metadata_df['Code'] == stock_code]
+        if not matched_rows.empty:
+            stock_info = matched_rows.iloc[0]
+            for column in ['Name', 'Group']:
+                value = stock_info.get(column)
+                if pd.notna(value) and value:
+                    title_parts.append(str(value))
+
+    return ' - '.join(title_parts)
 
 
 def read_stock_csv(csv_path):
@@ -230,6 +274,81 @@ graphDiv.on('plotly_relayout', eventData => {{
 '''
 
 
+def get_wick_points(df_stock, direction):
+    '''
+    Return x/y points for vertical candle wick segments.
+    '''
+    wick_x = []
+    wick_y = []
+
+    if direction == 'rising':
+        rows = df_stock[df_stock['Close'] > df_stock['Open']]
+    elif direction == 'falling':
+        rows = df_stock[df_stock['Close'] < df_stock['Open']]
+    else:
+        rows = df_stock[df_stock['Close'] == df_stock['Open']]
+
+    for row in rows.itertuples(index=False):
+        wick_x.extend([row.Date, row.Date, None])
+        wick_y.extend([row.Low, row.High, None])
+
+    return wick_x, wick_y
+
+
+def get_doji_points(df_stock):
+    '''
+    Return x/y points for horizontal zero-change candle bodies.
+    '''
+    doji_x = []
+    doji_y = []
+    doji_df = df_stock[df_stock['Close'] == df_stock['Open']]
+
+    if doji_df.empty:
+        return doji_x, doji_y
+
+    date_step = df_stock['Date'].diff().dropna().median()
+    if pd.isna(date_step):
+        date_step = pd.Timedelta(days=1)
+
+    half_width = date_step * 0.28
+
+    for row in doji_df.itertuples(index=False):
+        doji_x.extend([row.Date - half_width, row.Date + half_width, None])
+        doji_y.extend([row.Close, row.Close, None])
+
+    return doji_x, doji_y
+
+
+def add_moving_average_traces(fig, df_stock):
+    '''
+    Add moving average lines to the price chart.
+    '''
+    for window, color in MOVING_AVERAGES:
+        ma_column = f'MA{window}'
+        df_stock[ma_column] = df_stock['Close'].rolling(
+            window=window,
+            min_periods=window,
+        ).mean()
+
+        fig.add_trace(
+            go.Scatter(
+                x=df_stock['Date'],
+                y=df_stock[ma_column],
+                mode='lines',
+                name=f'{window} day MA',
+                line=dict(color=color, width=1.8),
+                connectgaps=False,
+                hovertemplate=(
+                    'Date=%{x}<br>'
+                    f'{window} day MA='
+                    '%{y:.2f}<extra></extra>'
+                ),
+            ),
+            row=1,
+            col=1,
+        )
+
+
 def build_stock_figure(df_stock, title):
     '''
     Build an interactive candlestick and capacity bar chart.
@@ -243,24 +362,114 @@ def build_stock_figure(df_stock, title):
         rows=2,
         cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.04,
-        row_heights=[0.72, 0.28],
+        vertical_spacing=0.12,
+        row_heights=[0.70, 0.30],
     )
 
+    rising_df = df_stock[df_stock['Close'] > df_stock['Open']]
+    falling_df = df_stock[df_stock['Close'] < df_stock['Open']]
+    rising_wick_x, rising_wick_y = get_wick_points(df_stock, 'rising')
+    falling_wick_x, falling_wick_y = get_wick_points(df_stock, 'falling')
+    doji_wick_x, doji_wick_y = get_wick_points(df_stock, 'doji')
+    doji_x, doji_y = get_doji_points(df_stock)
+
     fig.add_trace(
-        go.Candlestick(
-            x=df_stock['Date'],
-            open=df_stock['Open'],
-            high=df_stock['High'],
-            low=df_stock['Low'],
-            close=df_stock['Close'],
-            name='Price',
-            increasing_line_color='#d62728',
-            decreasing_line_color='#2ca02c',
+        go.Scatter(
+            x=rising_wick_x,
+            y=rising_wick_y,
+            mode='lines',
+            line=dict(color='#d62728', width=1),
+            hoverinfo='skip',
+            showlegend=False,
+            name='Rising wick',
         ),
         row=1,
         col=1,
     )
+
+    fig.add_trace(
+        go.Scatter(
+            x=falling_wick_x,
+            y=falling_wick_y,
+            mode='lines',
+            line=dict(color='#2ca02c', width=1),
+            hoverinfo='skip',
+            showlegend=False,
+            name='Falling wick',
+        ),
+        row=1,
+        col=1,
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=doji_wick_x,
+            y=doji_wick_y,
+            mode='lines',
+            line=dict(color='#666666', width=1),
+            hoverinfo='skip',
+            showlegend=False,
+            name='Unchanged wick',
+        ),
+        row=1,
+        col=1,
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=doji_x,
+            y=doji_y,
+            mode='lines',
+            line=dict(color='#666666', width=2),
+            hoverinfo='skip',
+            showlegend=False,
+            name='Unchanged price',
+        ),
+        row=1,
+        col=1,
+    )
+
+    fig.add_trace(
+        go.Bar(
+            x=rising_df['Date'],
+            y=(rising_df['Close'] - rising_df['Open']).abs(),
+            base=rising_df[['Open', 'Close']].min(axis=1),
+            name='Rising price',
+            marker=dict(color='#d62728', line=dict(width=0)),
+            customdata=rising_df[['Open', 'High', 'Low', 'Close']],
+            hovertemplate=(
+                'Date=%{x}<br>'
+                'Open=%{customdata[0]}<br>'
+                'High=%{customdata[1]}<br>'
+                'Low=%{customdata[2]}<br>'
+                'Close=%{customdata[3]}<extra></extra>'
+            ),
+        ),
+        row=1,
+        col=1,
+    )
+
+    fig.add_trace(
+        go.Bar(
+            x=falling_df['Date'],
+            y=(falling_df['Close'] - falling_df['Open']).abs(),
+            base=falling_df[['Open', 'Close']].min(axis=1),
+            name='Falling price',
+            marker=dict(color='#2ca02c', line=dict(width=0)),
+            customdata=falling_df[['Open', 'High', 'Low', 'Close']],
+            hovertemplate=(
+                'Date=%{x}<br>'
+                'Open=%{customdata[0]}<br>'
+                'High=%{customdata[1]}<br>'
+                'Low=%{customdata[2]}<br>'
+                'Close=%{customdata[3]}<extra></extra>'
+            ),
+        ),
+        row=1,
+        col=1,
+    )
+
+    add_moving_average_traces(fig, df_stock)
 
     fig.add_trace(
         go.Bar(
@@ -273,21 +482,24 @@ def build_stock_figure(df_stock, title):
         col=1,
     )
 
+    hidden_date_breaks = [
+        dict(bounds=['sat', 'mon']),
+        dict(values=missing_dates),
+    ]
+
     fig.update_layout(
         title=title,
         template='plotly_white',
         hovermode='x unified',
         dragmode='zoom',
+        bargap=0.18,
         height=780,
         margin=dict(l=60, r=32, t=64, b=40),
         legend=dict(orientation='h', yanchor='bottom', y=1.02,
                     xanchor='right', x=1),
         xaxis=dict(
-            rangeslider=dict(visible=True),
-            rangebreaks=[
-                dict(bounds=['sat', 'mon']),
-                dict(values=missing_dates),
-            ],
+            rangeslider=dict(visible=True, thickness=0.07),
+            rangebreaks=hidden_date_breaks,
             rangeselector=dict(
                 buttons=[
                     dict(count=1, label='1m', step='month', stepmode='backward'),
@@ -297,6 +509,10 @@ def build_stock_figure(df_stock, title):
                     dict(step='all', label='All'),
                 ],
             ),
+        ),
+        xaxis2=dict(
+            rangeslider=dict(visible=False),
+            rangebreaks=hidden_date_breaks,
         ),
         yaxis_title='Price',
         yaxis2_title='Capacity',
@@ -353,7 +569,7 @@ def visualize_stock_csv(csv_path, output_path=None):
     df_stock = read_stock_csv(csv_path)
 
     # Build stock
-    fig, df_stock = build_stock_figure(df_stock, Path(csv_path).stem)
+    fig, df_stock = build_stock_figure(df_stock, get_stock_title(csv_path))
 
     # Output Figure to HTML file 
     write_stock_figure(fig, output_path, get_autorange_script(df_stock))
