@@ -1,17 +1,22 @@
 '''
-stockDownload.py
+price.py
 
 Download/cache stock price data and optionally render interactive charts.
 '''
 import glob
 import os
 import random
+import sys
 import time
 from datetime import datetime
 
 import pandas as pd
 import twstock
 import twstock.stock as twstock_stock
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 from config import cfg
 from stock_viz import visualize_stock_csv
@@ -23,9 +28,9 @@ from stock_viz import visualize_stock_csv
 # Starting date for the data fetch
 START_YEAR = 2020
 START_MONTH = 5
-DATA_DIR = './data'
-LOG_DIR = './log'
-PLOT_DIR = './plot'
+DATA_DIR = os.path.join(PROJECT_ROOT, 'data', 'price')
+LOG_DIR = os.path.join(PROJECT_ROOT, 'log')
+PLOT_DIR = os.path.join(PROJECT_ROOT, 'plot')
 METADATA_PATH = f'{DATA_DIR}/stock_metadata.csv'
 ERROR_LOG_PATH = f'{LOG_DIR}/stock_download_errors.csv'
 
@@ -95,10 +100,11 @@ def get_stock_output_path(stock_tar, start_time, end_time):
 
 def build_stock_catalog():
     '''
-    Return metadata for all TWSE/TPEX common stock codes known by twstock.
+    Return metadata for TWSE-listed common stock codes known by twstock.
 
     twstock.codes also includes warrants, ETFs, ETNs, TDRs, and other
-    instruments.  Filtering to common stock keeps the download list focused.
+    instruments.  Filtering to TWSE common stock keeps the download list
+    focused on listed stocks.
     '''
     rows = []
 
@@ -107,7 +113,7 @@ def build_stock_catalog():
             code.isdigit()
             and len(code) == 4
             and info.type == COMMON_STOCK_TYPE
-            and info.market in (TWSE_MARKET, TPEX_MARKET)
+            and info.market == TWSE_MARKET
         ):
             continue
 
@@ -127,7 +133,7 @@ def build_stock_catalog():
 
 def get_all_stock_codes():
     '''
-    Return all TWSE/TPEX common stock codes known by twstock.
+    Return all TWSE-listed common stock codes known by twstock.
     '''
     return build_stock_catalog()['Code'].tolist()
 
