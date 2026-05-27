@@ -1,3 +1,9 @@
 data/
 plot/
 __pycache__/
+.pytest_cache/
+log/
+logs/
+*.py[cod]
+.env
+.venv/
