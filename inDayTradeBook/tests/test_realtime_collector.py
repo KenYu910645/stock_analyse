@@ -80,9 +80,35 @@ def test_disconnect_reconnects_when_running(monkeypatch) -> None:
     calls: list[str] = []
 
     monkeypatch.setattr("time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(collector, "init_realtime", lambda: calls.append("init"))
     monkeypatch.setattr(collector, "connect", lambda: calls.append("connect"))
     monkeypatch.setattr(collector, "subscribe", lambda: calls.append("subscribe"))
 
     collector.on_disconnect("closed")
 
-    assert calls == ["connect", "subscribe"]
+    assert calls == ["init", "connect", "subscribe"]
+
+
+def test_reconnect_retries_with_fresh_client_after_closed_socket(monkeypatch) -> None:
+    writer = RecordingWriter()
+    collector = FubonRealtimeCollector(make_config(), writer)
+    collector.running = True
+    calls: list[str] = []
+
+    monkeypatch.setattr("time.sleep", lambda _seconds: None)
+    monkeypatch.setattr(collector, "init_realtime", lambda: calls.append("init"))
+    monkeypatch.setattr(collector, "connect", lambda: calls.append("connect"))
+
+    attempts = {"count": 0}
+
+    def subscribe() -> None:
+        calls.append("subscribe")
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("Connection is already closed.")
+
+    monkeypatch.setattr(collector, "subscribe", subscribe)
+
+    collector.reconnect()
+
+    assert calls == ["init", "connect", "subscribe", "init", "connect", "subscribe"]

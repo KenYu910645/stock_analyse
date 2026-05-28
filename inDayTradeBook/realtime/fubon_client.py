@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
@@ -32,16 +33,18 @@ class FubonRealtimeCollector:
         self.stock: Any | None = None
         self.running = False
         self.event_count = 0
+        self._closing = False
+        self._reconnect_lock = threading.Lock()
 
     def login(self) -> None:
         self.sdk = create_fubon_sdk(self.config.fubon_ws_url)
-        result = self.sdk.login(
+        self.sdk.login(
             self.config.fubon_id,
             self.config.fubon_password,
             self.config.fubon_cert_path,
             self.config.fubon_cert_password_for_login,
         )
-        logger.info("Fubon login success: %s", result, extra=log_extra())
+        logger.info("Fubon login success", extra=log_extra())
 
     def init_realtime(self) -> None:
         if self.sdk is None:
@@ -132,17 +135,37 @@ class FubonRealtimeCollector:
 
     def on_disconnect(self, *args: Any) -> None:
         logger.warning("WebSocket disconnected: %s", args, extra=log_extra())
-        if self.running:
+        if self.running and not self._closing:
             self.reconnect()
 
     def reconnect(self) -> None:
-        time.sleep(self.config.reconnect_delay_seconds)
+        if not self._reconnect_lock.acquire(blocking=False):
+            logger.info("Reconnect already in progress", extra=log_extra())
+            return
+
         try:
-            self.connect()
-            self.subscribe()
-            logger.info("WebSocket reconnected and resubscribed", extra=log_extra())
-        except Exception:
-            logger.exception("Reconnect attempt failed", extra=log_extra())
+            attempt = 0
+            while self.running:
+                attempt += 1
+                time.sleep(self.config.reconnect_delay_seconds)
+                try:
+                    self._close_stock()
+                    self.init_realtime()
+                    self.connect()
+                    self.subscribe()
+                    logger.info(
+                        "WebSocket reconnected and resubscribed",
+                        extra=log_extra(),
+                    )
+                    return
+                except Exception:
+                    logger.exception(
+                        "Reconnect attempt %s failed",
+                        attempt,
+                        extra=log_extra(),
+                    )
+        finally:
+            self._reconnect_lock.release()
 
     def run_forever(self) -> None:
         self.running = True
@@ -157,13 +180,26 @@ class FubonRealtimeCollector:
         self.running = False
 
     def close(self) -> None:
+        self._close_stock()
+
+    def _close_stock(self) -> None:
         if self.stock is None:
             return
-        for method_name in ("disconnect", "close"):
-            method = getattr(self.stock, method_name, None)
-            if callable(method):
-                try:
-                    method()
-                except Exception:
-                    logger.exception("Failed to close websocket", extra=log_extra())
-                break
+        stock = self.stock
+        self.stock = None
+        self._closing = True
+        try:
+            for method_name in ("disconnect", "close"):
+                method = getattr(stock, method_name, None)
+                if callable(method):
+                    try:
+                        method()
+                    except Exception:
+                        logger.debug(
+                            "Failed to close websocket during reset",
+                            exc_info=True,
+                            extra=log_extra(),
+                        )
+                    break
+        finally:
+            self._closing = False
