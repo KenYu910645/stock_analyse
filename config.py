@@ -17,8 +17,8 @@ class Config:
             '2454',
         ]
         self.download_all_stocks = True
-        self.throttle_min_seconds = 1
-        self.throttle_max_seconds = 3
+        self.throttle_min_seconds = 0.2
+        self.throttle_max_seconds = 0.8
         self.max_retries = 3
         self.retry_backoff_seconds = 10
         self.is_plot = False

@@ -1,5 +1,5 @@
 '''
-stockDownloadBasic.py
+dividend_pe_pb.py
 
 Download/cache TWSE historical daily valuation data:
 P/E ratio, dividend yield, and price-to-book ratio.
@@ -14,8 +14,9 @@ import pandas as pd
 import requests
 
 
-DATA_DIR = './data'
-LOG_DIR = './log'
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+DATA_DIR = os.path.join(PROJECT_ROOT, 'data')
+LOG_DIR = os.path.join(PROJECT_ROOT, 'log')
 DEFAULT_START_DATE = '2020-01-01'
 REQUEST_TIMEOUT_SECONDS = 20
 MAX_RETRIES = 3

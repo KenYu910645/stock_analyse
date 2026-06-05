@@ -319,7 +319,7 @@ def get_doji_points(df_stock):
     return doji_x, doji_y
 
 
-def add_moving_average_traces(fig, df_stock):
+def add_moving_average_traces(fig, df_stock, row=1, col=1):
     '''
     Add moving average lines to the price chart.
     '''
@@ -344,28 +344,31 @@ def add_moving_average_traces(fig, df_stock):
                     '%{y:.2f}<extra></extra>'
                 ),
             ),
-            row=1,
-            col=1,
+            row=row,
+            col=col,
         )
 
 
-def build_stock_figure(df_stock, title):
+def get_hidden_date_breaks(df_stock):
     '''
-    Build an interactive candlestick and capacity bar chart.
+    Return range breaks for weekends and missing trading dates.
     '''
-    df_stock = clean_stock_data(df_stock)
-    missing_dates = get_missing_trading_dates(df_stock)
-    price_range = get_axis_range(df_stock['Low'].min(), df_stock['High'].max())
-    capacity_range = get_axis_range(0, df_stock['Capacity'].max(), floor_zero=True)
+    return [
+        dict(bounds=['sat', 'mon']),
+        dict(values=get_missing_trading_dates(df_stock)),
+    ]
 
-    fig = make_subplots(
-        rows=2,
-        cols=1,
-        shared_xaxes=True,
-        vertical_spacing=0.12,
-        row_heights=[0.70, 0.30],
-    )
 
+def add_stock_price_traces(
+    fig,
+    df_stock,
+    row=1,
+    col=1,
+    include_moving_averages=True,
+):
+    '''
+    Add solid candle price traces to a caller-provided subplot.
+    '''
     rising_df = df_stock[df_stock['Close'] > df_stock['Open']]
     falling_df = df_stock[df_stock['Close'] < df_stock['Open']]
     rising_wick_x, rising_wick_y = get_wick_points(df_stock, 'rising')
@@ -383,8 +386,8 @@ def build_stock_figure(df_stock, title):
             showlegend=False,
             name='Rising wick',
         ),
-        row=1,
-        col=1,
+        row=row,
+        col=col,
     )
 
     fig.add_trace(
@@ -397,8 +400,8 @@ def build_stock_figure(df_stock, title):
             showlegend=False,
             name='Falling wick',
         ),
-        row=1,
-        col=1,
+        row=row,
+        col=col,
     )
 
     fig.add_trace(
@@ -411,8 +414,8 @@ def build_stock_figure(df_stock, title):
             showlegend=False,
             name='Unchanged wick',
         ),
-        row=1,
-        col=1,
+        row=row,
+        col=col,
     )
 
     fig.add_trace(
@@ -425,8 +428,8 @@ def build_stock_figure(df_stock, title):
             showlegend=False,
             name='Unchanged price',
         ),
-        row=1,
-        col=1,
+        row=row,
+        col=col,
     )
 
     fig.add_trace(
@@ -445,8 +448,8 @@ def build_stock_figure(df_stock, title):
                 'Close=%{customdata[3]}<extra></extra>'
             ),
         ),
-        row=1,
-        col=1,
+        row=row,
+        col=col,
     )
 
     fig.add_trace(
@@ -465,12 +468,18 @@ def build_stock_figure(df_stock, title):
                 'Close=%{customdata[3]}<extra></extra>'
             ),
         ),
-        row=1,
-        col=1,
+        row=row,
+        col=col,
     )
 
-    add_moving_average_traces(fig, df_stock)
+    if include_moving_averages:
+        add_moving_average_traces(fig, df_stock, row=row, col=col)
 
+
+def add_capacity_trace(fig, df_stock, row=1, col=1):
+    '''
+    Add capacity bars to a caller-provided subplot.
+    '''
     fig.add_trace(
         go.Bar(
             x=df_stock['Date'],
@@ -478,14 +487,30 @@ def build_stock_figure(df_stock, title):
             name='Capacity',
             marker_color='#4c78a8',
         ),
-        row=2,
-        col=1,
+        row=row,
+        col=col,
     )
 
-    hidden_date_breaks = [
-        dict(bounds=['sat', 'mon']),
-        dict(values=missing_dates),
-    ]
+
+def build_stock_figure(df_stock, title):
+    '''
+    Build an interactive candlestick and capacity bar chart.
+    '''
+    df_stock = clean_stock_data(df_stock)
+    hidden_date_breaks = get_hidden_date_breaks(df_stock)
+    price_range = get_axis_range(df_stock['Low'].min(), df_stock['High'].max())
+    capacity_range = get_axis_range(0, df_stock['Capacity'].max(), floor_zero=True)
+
+    fig = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.12,
+        row_heights=[0.70, 0.30],
+    )
+
+    add_stock_price_traces(fig, df_stock, row=1, col=1)
+    add_capacity_trace(fig, df_stock, row=2, col=1)
 
     fig.update_layout(
         title=title,
