@@ -1,5 +1,7 @@
 data/
 plot/
+runs/
+tools/
 __pycache__/
 .pytest_cache/
 log/
@@ -7,3 +9,5 @@ logs/
 *.py[cod]
 .env
 .venv/
+*.csv
+*.xlsx
