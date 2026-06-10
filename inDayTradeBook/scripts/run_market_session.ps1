@@ -27,6 +27,67 @@ function Add-DockerToPath {
     }
 }
 
+function Invoke-Checked {
+    param(
+        [string]$FilePath,
+        [string[]]$ArgumentList,
+        [string]$Description
+    )
+
+    Write-WrapperLog "start_$Description=$(Get-Date -Format o)"
+    & $FilePath @ArgumentList 2>&1 | Tee-Object -FilePath $WrapperLog -Append
+    if ($LASTEXITCODE -ne 0) {
+        throw "$Description failed with exit code $LASTEXITCODE"
+    }
+    Write-WrapperLog "done_$Description=$(Get-Date -Format o)"
+}
+
+function Start-DockerDesktop {
+    $dockerDesktop = "C:\Program Files\Docker\Docker\Docker Desktop.exe"
+    if (Test-Path $dockerDesktop) {
+        Write-WrapperLog "starting_docker_desktop=$(Get-Date -Format o)"
+        Start-Process -FilePath $dockerDesktop -WindowStyle Hidden
+    }
+}
+
+function Wait-DockerDaemon {
+    param([int]$TimeoutSeconds = 300)
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        docker info *> $null
+        if ($LASTEXITCODE -eq 0) {
+            Write-WrapperLog "docker_ready=$(Get-Date -Format o)"
+            return
+        }
+
+        Start-DockerDesktop
+        Start-Sleep -Seconds 5
+    }
+
+    throw "Docker daemon did not become ready within $TimeoutSeconds seconds."
+}
+
+function Wait-TcpPort {
+    param(
+        [string]$HostName,
+        [int]$Port,
+        [int]$TimeoutSeconds = 120
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $ok = (Test-NetConnection -ComputerName $HostName -Port $Port -WarningAction SilentlyContinue).TcpTestSucceeded
+        if ($ok) {
+            Write-WrapperLog "tcp_ready=$HostName`:$Port $(Get-Date -Format o)"
+            return
+        }
+        Start-Sleep -Seconds 2
+    }
+
+    throw "$HostName`:$Port did not become ready within $TimeoutSeconds seconds."
+}
+
 function Load-Credentials {
     param([string]$Path)
 
@@ -104,8 +165,11 @@ Load-Credentials -Path $CredentialPath
 [Environment]::SetEnvironmentVariable("CHANNELS", "trades,books", "Process")
 [Environment]::SetEnvironmentVariable("PYTHONUNBUFFERED", "1", "Process")
 
-docker compose up -d timescaledb | Tee-Object -FilePath $WrapperLog -Append
-python scripts/init_db.py | Tee-Object -FilePath $WrapperLog -Append
+Wait-DockerDaemon -TimeoutSeconds 300
+Invoke-Checked -FilePath "docker" -ArgumentList @("compose", "up", "-d", "timescaledb") -Description "docker_compose_up"
+Wait-TcpPort -HostName "localhost" -Port 5432 -TimeoutSeconds 180
+Invoke-Checked -FilePath "python" -ArgumentList @("scripts/init_db.py") -Description "init_db"
+Wait-TcpPort -HostName "localhost" -Port 5432 -TimeoutSeconds 60
 
 $proc = Start-Process `
     -FilePath "python" `
