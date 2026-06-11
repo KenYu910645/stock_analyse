@@ -35,9 +35,29 @@ function Invoke-Checked {
     )
 
     Write-WrapperLog "start_$Description=$(Get-Date -Format o)"
-    & $FilePath @ArgumentList 2>&1 | Tee-Object -FilePath $WrapperLog -Append
-    if ($LASTEXITCODE -ne 0) {
-        throw "$Description failed with exit code $LASTEXITCODE"
+    $stdoutTmp = Join-Path $LogDir "$Stamp.$Description.stdout.tmp"
+    $stderrTmp = Join-Path $LogDir "$Stamp.$Description.stderr.tmp"
+
+    $proc = Start-Process `
+        -FilePath $FilePath `
+        -ArgumentList $ArgumentList `
+        -WorkingDirectory $Root `
+        -RedirectStandardOutput $stdoutTmp `
+        -RedirectStandardError $stderrTmp `
+        -NoNewWindow `
+        -Wait `
+        -PassThru
+
+    foreach ($path in @($stdoutTmp, $stderrTmp)) {
+        if (Test-Path $path) {
+            Get-Content -LiteralPath $path -ErrorAction SilentlyContinue |
+                Out-File -FilePath $WrapperLog -Encoding utf8 -Append
+            Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    if ($proc.ExitCode -ne 0) {
+        throw "$Description failed with exit code $($proc.ExitCode)"
     }
     Write-WrapperLog "done_$Description=$(Get-Date -Format o)"
 }
@@ -115,6 +135,12 @@ function Load-Credentials {
 
     [Environment]::SetEnvironmentVariable("FUBON_CERT_PASSWORD", $null, "Process")
     Remove-Item Env:FUBON_CERT_PASSWORD -ErrorAction SilentlyContinue
+}
+
+trap {
+    Write-WrapperLog "wrapper_error=$(Get-Date -Format o); $($_.Exception.Message)"
+    Write-WrapperLog "wrapper_error_detail=$($_ | Out-String)"
+    exit 1
 }
 
 Set-Location -Path $Root
