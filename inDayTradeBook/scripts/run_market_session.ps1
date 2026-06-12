@@ -75,8 +75,20 @@ function Wait-DockerDaemon {
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
-        docker info *> $null
-        if ($LASTEXITCODE -eq 0) {
+        $stdoutTmp = Join-Path $LogDir "$Stamp.docker_info.stdout.tmp"
+        $stderrTmp = Join-Path $LogDir "$Stamp.docker_info.stderr.tmp"
+        $proc = Start-Process `
+            -FilePath "docker" `
+            -ArgumentList @("info") `
+            -WorkingDirectory $Root `
+            -RedirectStandardOutput $stdoutTmp `
+            -RedirectStandardError $stderrTmp `
+            -NoNewWindow `
+            -Wait `
+            -PassThru
+        Remove-Item -LiteralPath $stdoutTmp, $stderrTmp -Force -ErrorAction SilentlyContinue
+
+        if ($proc.ExitCode -eq 0) {
             Write-WrapperLog "docker_ready=$(Get-Date -Format o)"
             return
         }
