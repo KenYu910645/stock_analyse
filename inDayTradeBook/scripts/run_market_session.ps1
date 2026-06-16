@@ -7,7 +7,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $Root = Split-Path -Parent $PSScriptRoot
-$LogDir = Join-Path $Root "log"
+$LogDir = Join-Path $Root "logs"
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
 $Stamp = Get-Date -Format "yyyyMMdd_HHmmss"

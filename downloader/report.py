@@ -26,7 +26,8 @@ DEFAULT_STOCK_CODE = '2330'
 DEFAULT_STOCK_NAME = '\u53f0\u7a4d\u96fb'
 DEFAULT_START_YEAR = 2020
 DEFAULT_END_YEAR = date.today().year
-DEFAULT_METADATA_PATH = os.path.join(DATA_DIR, 'stock_metadata.csv')
+DEFAULT_METADATA_PATH = os.path.join(DATA_DIR, 'metadata.csv')
+COMMON_STOCK_TYPE = '\u80a1\u7968'
 TWSE_MARKET = '\u4e0a\u5e02'
 
 STATEMENTS = {
@@ -90,7 +91,7 @@ def parse_args():
     parser.add_argument(
         '--all-stocks',
         action='store_true',
-        help='Download reports for all TWSE listed stocks in stock_metadata.csv.',
+        help='Download reports for all TWSE listed common stocks in metadata.csv.',
     )
     parser.add_argument(
         '--metadata',
@@ -156,7 +157,7 @@ def get_output_path(stock_code):
 
 def load_twse_stock_catalog(metadata_path, max_stocks=None):
     '''
-    Load TWSE listed stock codes and names from stock_metadata.csv.
+    Load TWSE listed common-stock codes and names from metadata.csv.
     '''
     if not os.path.exists(metadata_path):
         raise FileNotFoundError(f'Stock metadata CSV does not exist: {metadata_path}')
@@ -167,7 +168,7 @@ def load_twse_stock_catalog(metadata_path, max_stocks=None):
     if missing_columns:
         raise ValueError(f'Metadata CSV is missing columns: {sorted(missing_columns)}')
 
-    df = df[df['Market'].eq(TWSE_MARKET)].copy()
+    df = df[df['Market'].eq(TWSE_MARKET) & df['Type'].eq(COMMON_STOCK_TYPE)].copy()
     df = df[['Code', 'Name']].dropna().drop_duplicates('Code')
     df = df.sort_values('Code').reset_index(drop=True)
 

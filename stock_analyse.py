@@ -11,7 +11,7 @@ import pandas as pd
 
 DATA_DIR = Path('./data')
 PRICE_DIR = DATA_DIR / 'price'
-METADATA_PATH = DATA_DIR / 'stock_metadata.csv'
+METADATA_PATH = DATA_DIR / 'metadata.csv'
 RESULT_PATH = Path('./statistic.txt')
 RESULT_CSV_PATH = Path('./statistic.csv')
 RESULT_XLSX_PATH = Path('./statistic.xlsx')

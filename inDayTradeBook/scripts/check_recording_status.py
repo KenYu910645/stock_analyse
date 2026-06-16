@@ -17,7 +17,7 @@ from realtime.config import RealtimeConfig
 
 
 def latest_wrapper_log() -> Path | None:
-    logs = sorted((FEATURE_ROOT / "log").glob("realtime_collector_*.wrapper.log"))
+    logs = sorted((FEATURE_ROOT / "logs").glob("realtime_collector_*.wrapper.log"))
     return logs[-1] if logs else None
 
 

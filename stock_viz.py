@@ -12,8 +12,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 
-PLOT_DIR = './plot'
-METADATA_PATH = './data/stock_metadata.csv'
+PLOT_DIR = './output/price_charts'
+METADATA_PATH = './data/metadata.csv'
 REQUIRED_COLUMNS = [
     'Date',
     'Open',
@@ -613,7 +613,7 @@ def parse_args():
     parser.add_argument('csv_path', help='Path to the stock CSV file.')
     parser.add_argument(
         '--output',
-        help='Output HTML path. Defaults to plot/<csv_stem>.html.',
+        help='Output HTML path. Defaults to output/price_charts/<csv_stem>.html.',
     )
     return parser.parse_args()
 

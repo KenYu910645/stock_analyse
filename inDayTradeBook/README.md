@@ -71,7 +71,7 @@ The task name is `InDayTradeBookRealtime`. It runs Monday-Friday at 09:00 and
 stops the collector at 13:30. It loads credentials from
 `C:\CAFubon\credential.txt`, leaves the certificate password unset so the SDK
 receives Python `None`, starts TimescaleDB, initializes the DB schema, and writes
-dated logs under `log/`.
+dated logs under `logs/`.
 
 Manual dry run:
 

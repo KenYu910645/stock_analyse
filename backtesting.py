@@ -24,9 +24,9 @@ from stock_viz import (
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DATA_DIR = PROJECT_ROOT / 'data'
-PLOT_DIR = PROJECT_ROOT / 'plot'
+PLOT_DIR = PROJECT_ROOT / 'output' / 'backtesting'
 STRATEGY_DIR = PROJECT_ROOT / 'strategies'
-STOCK_METADATA_PATH = DATA_DIR / 'stock_metadata.csv'
+STOCK_METADATA_PATH = DATA_DIR / 'metadata.csv'
 REQUIRED_COLUMNS = [
     'Date',
     'Open',
@@ -84,7 +84,7 @@ def parse_args():
         default=None,
         help=(
             'Directory for one batch run. Defaults to '
-            'plot/backtest_run_<timestamp> in --all mode.'
+            'output/backtesting/backtest_run_<timestamp> in --all mode.'
         ),
     )
     return parser.parse_args()

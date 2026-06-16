@@ -16,7 +16,7 @@ import requests
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 DATA_DIR = os.path.join(PROJECT_ROOT, 'data')
-LOG_DIR = os.path.join(PROJECT_ROOT, 'log')
+LOG_DIR = os.path.join(PROJECT_ROOT, 'logs')
 DEFAULT_START_DATE = '2020-01-01'
 REQUEST_TIMEOUT_SECONDS = 20
 MAX_RETRIES = 3

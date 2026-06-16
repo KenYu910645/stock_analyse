@@ -1,13 +1,15 @@
 data/
-plot/
+output/
 runs/
 tools/
 __pycache__/
 .pytest_cache/
-log/
 logs/
 *.py[cod]
 .env
 .venv/
 *.csv
 *.xlsx
+inDayTradeBook/vendor/
+result.txt
+statistic.txt
