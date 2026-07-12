@@ -22,15 +22,16 @@ def preprocess_factor(
 
     result[raw_col] = result[raw_col].replace([np.inf, -np.inf], np.nan)
     grouped_raw = result.groupby("date")[raw_col]
-    lower = grouped_raw.transform(lambda values: values.quantile(lower_q))
-    upper = grouped_raw.transform(lambda values: values.quantile(upper_q))
+    date_quantiles = grouped_raw.quantile([lower_q, upper_q]).unstack()
+    lower = result["date"].map(date_quantiles[lower_q])
+    upper = result["date"].map(date_quantiles[upper_q])
     result[winsor_col] = result[raw_col].clip(lower=lower, upper=upper)
 
     if zscore:
         grouped = result.groupby("date")[winsor_col]
         mean = grouped.transform("mean")
         std = grouped.transform("std")
-        result[z_col] = (result[winsor_col] - mean) / std.replace(0, pd.NA)
+        result[z_col] = (result[winsor_col] - mean) / std.replace(0, np.nan)
     else:
         result[z_col] = result[winsor_col]
 

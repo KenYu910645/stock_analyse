@@ -10,8 +10,6 @@ The current row is then traded by the current spread z-score.
 
 from __future__ import annotations
 
-import math
-
 import numpy as np
 import pandas as pd
 

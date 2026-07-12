@@ -6,12 +6,19 @@ import math
 
 import numpy as np
 import pandas as pd
-from scipy import stats
+
+try:
+    from scipy import stats
+except ModuleNotFoundError:  # pragma: no cover - exercised in minimal local environments.
+    stats = None
 
 
 def _grouped_corr(sample: pd.DataFrame, x_col: str, y_col: str, value_col: str) -> pd.DataFrame:
     """Compute Pearson correlation per factor/date using aggregate sums."""
-    work = sample[["factor_name", "date", x_col, y_col]].dropna().copy()
+    work = sample[["factor_name", "date", x_col, y_col]].copy()
+    work[x_col] = pd.to_numeric(work[x_col], errors="coerce")
+    work[y_col] = pd.to_numeric(work[y_col], errors="coerce")
+    work = work.dropna()
     work["_x2"] = work[x_col] * work[x_col]
     work["_y2"] = work[y_col] * work[y_col]
     work["_xy"] = work[x_col] * work[y_col]
@@ -96,7 +103,11 @@ def summarize_ic(ic_timeseries: pd.DataFrame) -> pd.DataFrame:
         mean_ic = float(clean_ic.mean()) if not clean_ic.empty else float("nan")
         std_ic = float(clean_ic.std(ddof=1)) if len(clean_ic) > 1 else float("nan")
         t_stat = mean_ic / (std_ic / math.sqrt(len(clean_ic))) if len(clean_ic) > 1 and std_ic else float("nan")
-        p_value = float(stats.ttest_1samp(clean_ic, 0, nan_policy="omit").pvalue) if len(clean_ic) > 1 else float("nan")
+        p_value = (
+            float(stats.ttest_1samp(clean_ic, 0, nan_policy="omit").pvalue)
+            if stats is not None and len(clean_ic) > 1
+            else float("nan")
+        )
         row = {
             "factor_name": factor_name,
             "horizon": horizon,

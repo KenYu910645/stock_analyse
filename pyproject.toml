@@ -1,0 +1,18 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+exclude = ["data", "data_viz", "logs", "output", "runs"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.lint.per-file-ignores]
+# These executable scripts add the repository root to sys.path before local imports.
+"tools/*.py" = ["E402"]
+"downloader/download_valuation_day_trading_history.py" = ["E402"]
+"viz/generate_dataset_viz.py" = ["E402"]
+"alpha_model/main.py" = ["E402"]
+# The updater is the compatibility facade consumed lazily by dataset task modules.
+"downloader/update_all_data.py" = ["E402", "F401"]

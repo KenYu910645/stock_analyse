@@ -34,22 +34,29 @@ def compute_quantile_returns(
         .rename(columns={label_col: "return"})
     )
 
-    long_short = []
-    for (factor_name, date_value), group in quantile_returns.groupby(["factor_name", "date"], sort=True):
-        top = group[group["quantile"] == group["quantile"].max()]["return"].mean()
-        bottom = group[group["quantile"] == group["quantile"].min()]["return"].mean()
-        before_cost = top - bottom
-        after_cost = before_cost - round_trip_cost if transaction_cost_enabled else before_cost
-        long_short.append(
-            {
-                "factor_name": factor_name,
-                "date": date_value,
-                "quantile": "long_short",
-                "return": before_cost,
-                "return_after_cost": after_cost,
-            }
-        )
-    long_short_df = pd.DataFrame(long_short)
+    boundary = (
+        quantile_returns.groupby(["factor_name", "date"], as_index=False)["quantile"]
+        .agg(min_quantile="min", max_quantile="max")
+    )
+    top = quantile_returns.merge(
+        boundary[["factor_name", "date", "max_quantile"]],
+        left_on=["factor_name", "date", "quantile"],
+        right_on=["factor_name", "date", "max_quantile"],
+        how="inner",
+    )[["factor_name", "date", "return"]].rename(columns={"return": "top_return"})
+    bottom = quantile_returns.merge(
+        boundary[["factor_name", "date", "min_quantile"]],
+        left_on=["factor_name", "date", "quantile"],
+        right_on=["factor_name", "date", "min_quantile"],
+        how="inner",
+    )[["factor_name", "date", "return"]].rename(columns={"return": "bottom_return"})
+    long_short_df = top.merge(bottom, on=["factor_name", "date"], how="inner")
+    long_short_df["return"] = long_short_df["top_return"] - long_short_df["bottom_return"]
+    long_short_df["return_after_cost"] = (
+        long_short_df["return"] - round_trip_cost if transaction_cost_enabled else long_short_df["return"]
+    )
+    long_short_df["quantile"] = "long_short"
+    long_short_df = long_short_df[["factor_name", "date", "quantile", "return", "return_after_cost"]]
     quantile_returns["return_after_cost"] = quantile_returns["return"]
     quantile_returns = pd.concat([quantile_returns, long_short_df], ignore_index=True)
 

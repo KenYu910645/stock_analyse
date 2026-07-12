@@ -1,0 +1,5 @@
+-r requirements.txt
+
+# Install the matching browser binary after the Python package:
+#   python -m playwright install chromium
+playwright==1.61.0

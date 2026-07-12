@@ -14,6 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from column_schema import read_csv_canonical
 from stock_correlation_analysis import DEFAULT_PRICE_PATH
 from pair_trading_backtest import calculate_metrics, summarize_trades
 from strategies.pair_trading import PairTradingStrategy
@@ -21,7 +22,7 @@ from strategies.pair_trading import PairTradingStrategy
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_CANDIDATES_PATH = PROJECT_ROOT / "output" / "pair_trading" / "cointegration_gt_0_5" / "pair_trading_candidates.csv"
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "output" / "pair_trading" / "candidate_visuals"
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data_viz" / "pair_trading" / "candidate_visuals"
 
 
 def parse_args() -> argparse.Namespace:
@@ -55,7 +56,10 @@ def configure_plot_fonts() -> None:
 
 
 def latest_price_path(price_dir: Path, stock_id: str) -> Path:
-    paths = sorted(price_dir.glob(f"{stock_id}_*_to_*.csv"))
+    paths = sorted(
+        path for path in price_dir.glob(f"{stock_id}_*.csv")
+        if not path.name.startswith("twse_price_")
+    )
     if not paths:
         raise FileNotFoundError(f"No adjusted price CSV found for {stock_id}.")
     return paths[-1]
@@ -63,8 +67,8 @@ def latest_price_path(price_dir: Path, stock_id: str) -> Path:
 
 def load_adjusted_close(price_dir: Path, stock_id: str) -> pd.DataFrame:
     path = latest_price_path(price_dir, stock_id)
-    df = pd.read_csv(path)
-    close_col = "Close_adj" if "Close_adj" in df.columns else "Close"
+    df = read_csv_canonical(path)
+    close_col = "close_adj" if "close_adj" in df.columns else "Close_adj" if "Close_adj" in df.columns else "Close"
     df = df[["Date", close_col]].copy()
     df.columns = ["Date", stock_id]
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")

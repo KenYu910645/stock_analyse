@@ -15,6 +15,8 @@ from datetime import date, datetime, timedelta
 
 import requests
 
+from column_schema import normalize_date_text, storage_fieldnames, storage_record
+
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 DATA_DIR = os.path.join(PROJECT_ROOT, 'data', 'margin')
@@ -47,14 +49,32 @@ OUTPUT_COLUMNS = [
     'MarginPreviousBalance',
     'MarginCurrentBalance',
     'MarginNextDayLimit',
+    'MarginFinancingUsageRate',
+    'MarginBalance20DayChangeRate',
+    'MarginMarketValue',
+    'MarginMarketValueTo20DayAvgTurnover',
     'ShortPurchase',
     'ShortSale',
     'ShortStockRepayment',
     'ShortPreviousBalance',
     'ShortCurrentBalance',
     'ShortNextDayLimit',
+    'ShortMarginBalanceRatio',
     'Offsetting',
     'Note',
+]
+
+MARGIN_FEATURE_COLUMNS = [
+    'MarginFinancingUsageRate',
+    'MarginBalance20DayChangeRate',
+    'MarginMarketValue',
+    'MarginMarketValueTo20DayAvgTurnover',
+    'ShortMarginBalanceRatio',
+]
+
+RAW_OUTPUT_COLUMNS = [
+    column for column in OUTPUT_COLUMNS
+    if column not in MARGIN_FEATURE_COLUMNS
 ]
 
 
@@ -201,7 +221,6 @@ def fetch_and_cache_date(query_date, force=False):
 
 
 def is_no_data_response(payload):
-    stat = str(payload.get('stat', ''))
     return payload.get('stat') != 'OK' and not payload.get('tables')
 
 
@@ -225,7 +244,7 @@ def parse_payload_rows(payload, query_date):
     if table is None:
         return []
 
-    row_date = payload.get('date') or format_twse_date(query_date)
+    row_date = normalize_date_text(payload.get('date') or format_twse_date(query_date))
     rows = []
     for raw_row in table.get('data', []):
         if len(raw_row) < 16:
@@ -365,7 +384,7 @@ def download_range(
     total_rows = 0
 
     with open(output_path, 'w', encoding='utf-8-sig', newline='') as output_file:
-        writer = csv.DictWriter(output_file, fieldnames=OUTPUT_COLUMNS)
+        writer = csv.DictWriter(output_file, fieldnames=storage_fieldnames(OUTPUT_COLUMNS))
         writer.writeheader()
 
         for index, query_date in enumerate(
@@ -384,7 +403,7 @@ def download_range(
                 continue
 
             if rows:
-                writer.writerows(rows)
+                writer.writerows(storage_record(row) for row in rows)
                 trading_days += 1
                 total_rows += len(rows)
             else:

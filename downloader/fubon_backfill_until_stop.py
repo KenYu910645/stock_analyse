@@ -81,21 +81,6 @@ def earliest_downloaded_date():
     return min(dates) if dates else None
 
 
-def recent_empty_streak(start_day, limit):
-    streak = 0
-    day = start_day
-    while streak < limit:
-        path = output_path_for(day)
-        if not os.path.exists(path):
-            break
-        if count_csv_rows(path) == 0:
-            streak += 1
-            day = previous_weekday(day)
-            continue
-        break
-    return streak
-
-
 def chunk_dates(start_day, count):
     dates = []
     day = start_day

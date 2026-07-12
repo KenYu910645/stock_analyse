@@ -9,10 +9,12 @@ from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
+
+from column_schema import read_csv_canonical
 from plotly.subplots import make_subplots
 
 
-PLOT_DIR = './output/price_charts'
+PLOT_DIR = './data_viz/price_charts'
 METADATA_PATH = './data/metadata.csv'
 REQUIRED_COLUMNS = [
     'Date',
@@ -32,7 +34,7 @@ MOVING_AVERAGES = [
 
 def get_stock_code_from_csv_path(csv_path):
     '''
-    Extract stock code from filenames like 2308_202005_to_202605.csv.
+    Extract stock code from filenames like 2308_台達電.csv.
     '''
     return Path(csv_path).stem.split('_')[0]
 
@@ -44,7 +46,7 @@ def read_stock_metadata(metadata_path=METADATA_PATH):
     if not os.path.exists(metadata_path):
         return pd.DataFrame()
 
-    return pd.read_csv(metadata_path, dtype={'Code': str})
+    return read_csv_canonical(metadata_path, dtype={'Code': str})
 
 
 def get_stock_title(csv_path, metadata_path=METADATA_PATH):
@@ -71,7 +73,7 @@ def read_stock_csv(csv_path):
     '''
     Read a stock price CSV and parse the Date column.
     '''
-    return pd.read_csv(csv_path, parse_dates=['Date'])
+    return read_csv_canonical(csv_path, parse_dates=['Date'])
 
 
 def validate_stock_data(df_stock):
@@ -613,7 +615,7 @@ def parse_args():
     parser.add_argument('csv_path', help='Path to the stock CSV file.')
     parser.add_argument(
         '--output',
-        help='Output HTML path. Defaults to output/price_charts/<csv_stem>.html.',
+        help='Output HTML path. Defaults to data_viz/price_charts/<csv_stem>.html.',
     )
     return parser.parse_args()
 
