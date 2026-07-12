@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from alpha_model.config import load_config
 from alpha_model.data import build_universe, filter_date_range, load_price_data
+from alpha_model.factors.institutional_flow import compute_trust_flow_factors
 from alpha_model.factors.momentum import compute_momentum_factors
-from alpha_model.labels import compute_future_returns
+from alpha_model.labels import compute_future_returns, compute_next_open_future_returns
 from alpha_model.metrics.ic import compute_ic_timeseries, summarize_ic
 from alpha_model.metrics.quantile import compute_quantile_returns
 from alpha_model.metrics.stability import compute_factor_stability
@@ -18,14 +24,45 @@ from alpha_model.reporting import ensure_dirs, write_plots, write_table_outputs
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Evaluate Taiwan stock momentum alpha factors.")
+    parser = argparse.ArgumentParser(description="Evaluate Taiwan stock alpha factors.")
     parser.add_argument("--config", default="alpha_model/config/momentum.yaml")
     parser.add_argument("--output-dir", default=None, help="Override table output directory.")
     parser.add_argument("--plot-dir", default=None, help="Override plot output directory.")
     parser.add_argument("--stock-limit", type=int, default=None, help="Load only the first N CSVs for smoke tests.")
     parser.add_argument("--start", default=None, help="Optional inclusive start date, YYYY-MM-DD.")
     parser.add_argument("--end", default=None, help="Optional inclusive end date, YYYY-MM-DD.")
+    parser.add_argument(
+        "--allow-unfiltered-universe",
+        action="store_true",
+        help="Intentionally load price files without the metadata common-stock filter.",
+    )
     return parser.parse_args()
+
+
+def compute_factor_frame(config: dict, universe_df):
+    """Dispatch configured factor calculations."""
+    factor_names = list(config["factor"]["names"])
+    factor_kind = config["factor"].get("kind", "momentum")
+    if factor_kind == "momentum":
+        return compute_momentum_factors(universe_df, factor_names)
+    if factor_kind == "institutional_trust_flow":
+        return compute_trust_flow_factors(
+            universe_df,
+            factor_names,
+            config["data"].get("institutional_dir", "data/institutional"),
+        )
+    raise ValueError(f"Unknown factor kind: {factor_kind}")
+
+
+def compute_label_frame(config: dict, price_df):
+    """Dispatch configured forward-return label calculations."""
+    horizons = [int(horizon) for horizon in config["labels"]["horizons"]]
+    label_method = config["labels"].get("method", "close_to_close")
+    if label_method == "close_to_close":
+        return compute_future_returns(price_df, horizons)
+    if label_method == "next_open_to_open":
+        return compute_next_open_future_returns(price_df, horizons)
+    raise ValueError(f"Unknown label method: {label_method}")
 
 
 def run_pipeline(config: dict, stock_limit: int | None = None, start: str | None = None, end: str | None = None) -> dict:
@@ -38,7 +75,7 @@ def run_pipeline(config: dict, stock_limit: int | None = None, start: str | None
     price_df = load_price_data(config, stock_limit=stock_limit)
     price_df = filter_date_range(price_df, start=start, end=end)
     universe_df = build_universe(price_df, config["universe"])
-    factor_df = compute_momentum_factors(universe_df, factor_names)
+    factor_df = compute_factor_frame(config, universe_df)
     factor_values = build_factor_values(
         factor_df,
         factor_names,
@@ -46,7 +83,7 @@ def run_pipeline(config: dict, stock_limit: int | None = None, start: str | None
         float(config["factor"]["winsorize_upper"]),
         bool(config["factor"].get("zscore", True)),
     )
-    future_returns = compute_future_returns(price_df, horizons)
+    future_returns = compute_label_frame(config, price_df)
     ic_timeseries = compute_ic_timeseries(factor_values, future_returns, horizons)
     ic_summary = summarize_ic(ic_timeseries)
     tc_config = config["evaluation"].get("transaction_cost", {})
@@ -59,7 +96,7 @@ def run_pipeline(config: dict, stock_limit: int | None = None, start: str | None
         float(tc_config.get("round_trip_cost", 0.006)),
     )
     turnover = compute_turnover(factor_values, quantiles)
-    coverage = compute_coverage(universe_df, factor_values)
+    coverage = compute_coverage(universe_df, factor_values, factor_names=factor_names)
     factor_stability = compute_factor_stability(factor_values)
     ic_summary = ic_summary.merge(
         quantile_summary[quantile_summary["quantile"].eq("long_short")],
@@ -88,6 +125,8 @@ def main() -> None:
         config["output"]["dir"] = args.output_dir
     if args.plot_dir:
         config["output"]["plot_dir"] = args.plot_dir
+    if args.allow_unfiltered_universe:
+        config["data"]["allow_unfiltered_universe"] = True
 
     output_dir = Path(config["output"]["dir"])
     plot_dir = Path(config["output"]["plot_dir"])

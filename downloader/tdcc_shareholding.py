@@ -18,6 +18,8 @@ from html.parser import HTMLParser
 import pandas as pd
 import requests
 
+from column_schema import read_csv_canonical
+
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 DATA_DIR = os.path.join(PROJECT_ROOT, 'data')
@@ -180,7 +182,7 @@ def read_parser(html):
 
 
 def load_listed_stocks():
-    df_metadata = pd.read_csv(STOCK_METADATA_PATH, dtype={'Code': str})
+    df_metadata = read_csv_canonical(STOCK_METADATA_PATH, dtype={'Code': str})
     df_metadata['Code'] = df_metadata['Code'].astype(str).str.strip()
     mask = (
         (df_metadata['Type'] == COMMON_STOCK_TYPE)

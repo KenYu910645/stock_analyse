@@ -12,9 +12,11 @@ from datetime import date, datetime, timedelta
 
 import requests
 
+from column_schema import storage_fieldnames, storage_name, storage_record
+
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-DATA_DIR = os.path.join(PROJECT_ROOT, 'data', 'codis', 'hourly')
+DATA_DIR = os.path.join(PROJECT_ROOT, 'data', 'codis_weather', 'hourly')
 LOG_DIR = os.path.join(PROJECT_ROOT, 'logs')
 
 CODIS_BASE_URL = 'https://codis.cwa.gov.tw'
@@ -292,7 +294,7 @@ def get_downloaded_dates(output_path):
     with open(output_path, newline='', encoding='utf-8-sig') as file_obj:
         reader = csv.DictReader(file_obj)
         for row in reader:
-            data_time = row.get('DataTime')
+            data_time = row.get('DataTime') or row.get(storage_name('DataTime'))
             if data_time:
                 downloaded_dates.add(data_time[:10])
 
@@ -306,7 +308,7 @@ def open_output_writer(output_path, force):
     exists = os.path.exists(output_path)
     mode = 'w' if force or not exists else 'a'
     file_obj = open(output_path, mode, newline='', encoding='utf-8-sig')
-    writer = csv.DictWriter(file_obj, fieldnames=OUTPUT_COLUMNS)
+    writer = csv.DictWriter(file_obj, fieldnames=storage_fieldnames(OUTPUT_COLUMNS))
     if mode == 'w':
         writer.writeheader()
 
@@ -427,9 +429,9 @@ def write_log_rows(log_rows, start_date, end_date):
     os.makedirs(LOG_DIR, exist_ok=True)
     log_path = get_log_path(start_date, end_date)
     with open(log_path, 'w', newline='', encoding='utf-8-sig') as file_obj:
-        writer = csv.DictWriter(file_obj, fieldnames=LOG_COLUMNS)
+        writer = csv.DictWriter(file_obj, fieldnames=storage_fieldnames(LOG_COLUMNS))
         writer.writeheader()
-        writer.writerows(log_rows)
+        writer.writerows(storage_record(row) for row in log_rows)
 
     return log_path
 
@@ -518,7 +520,7 @@ def download_city(session, city_key, start_date, end_date, args):
                     })
                 else:
                     normalized_rows = normalize_rows(city_key, segment, rows)
-                    writer.writerows(normalized_rows)
+                    writer.writerows(storage_record(row) for row in normalized_rows)
                     file_obj.flush()
                     downloaded_dates.add(query_date_text)
                     stats['dates_downloaded'] += 1

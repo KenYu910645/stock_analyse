@@ -20,6 +20,8 @@ import pandas as pd
 import requests
 from lxml import html
 
+from column_schema import read_csv_canonical, to_csv_storage
+
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 DATA_DIR = os.path.join(PROJECT_ROOT, 'data')
@@ -224,7 +226,7 @@ def sleep_between_requests(throttle_min, throttle_max):
 
 
 def load_listed_stock_lookup():
-    df = pd.read_csv(STOCK_METADATA_PATH, dtype=str).fillna('')
+    df = read_csv_canonical(STOCK_METADATA_PATH, dtype=str).fillna('')
     mask = (
         (df['Market'] == LISTED_MARKET)
         & (df['Type'] == COMMON_STOCK_TYPE)
@@ -488,7 +490,7 @@ def download(args):
                         )
 
         df = pd.DataFrame(all_rows, columns=OUTPUT_COLUMNS)
-        df.to_csv(output_path, index=False, encoding='utf-8-sig')
+        to_csv_storage(df, output_path, index=False, encoding='utf-8-sig')
         print(f'Wrote {len(df)} rows to {output_path}')
         output_paths.append(output_path)
         if args.stop_after_empty_dates:

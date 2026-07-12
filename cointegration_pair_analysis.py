@@ -26,7 +26,6 @@ import pandas as pd
 from stock_correlation_analysis import (
     DEFAULT_METADATA_PATH,
     DEFAULT_PRICE_PATH,
-    build_stock_info,
     clean_price_data,
     load_metadata,
     load_price_data,
@@ -516,7 +515,6 @@ def main() -> None:
     metadata = load_metadata(args.metadata)
     raw_price = load_price_data(args.price_path)
     clean_df = clean_price_data(raw_price, metadata=metadata, common_only=True)
-    stock_info = build_stock_info(clean_df)
     price_wide = make_price_matrix(clean_df)
 
     results = build_pair_analysis(

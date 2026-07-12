@@ -1,12 +1,13 @@
 data:
-  price_dir: data/adj_price
+  price_dir: data/price
   metadata_path: data/metadata.csv
+  allow_unfiltered_universe: false
   date_col: Date
   stock_id_from_filename: true
-  open_col: Open_adj
-  high_col: High_adj
-  low_col: Low_adj
-  close_col: Close_adj
+  open_col: open_adj
+  high_col: high_adj
+  low_col: low_adj
+  close_col: close_adj
   volume_col: Capacity
   turnover_col: Turnover
 
@@ -39,4 +40,4 @@ evaluation:
 
 output:
   dir: output/alpha_model/tables
-  plot_dir: output/alpha_model/plots
+  plot_dir: data_viz/alpha_model/plots

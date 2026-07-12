@@ -10,7 +10,8 @@ import random
 import re
 import sys
 import time
-from datetime import date, datetime
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 import requests
@@ -21,7 +22,7 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from config import cfg
+from column_schema import read_csv_canonical, to_csv_storage  # noqa: E402
 #######################
 ### Global variable ###
 #######################
@@ -30,11 +31,10 @@ START_YEAR = 2020
 START_MONTH = 5
 DATA_DIR = os.path.join(PROJECT_ROOT, 'data', 'price')
 LOG_DIR = os.path.join(PROJECT_ROOT, 'logs')
-PLOT_DIR = os.path.join(PROJECT_ROOT, 'output', 'price_charts')
+PLOT_DIR = os.path.join(PROJECT_ROOT, 'data_viz', 'price_charts')
 METADATA_PATH = os.path.join(PROJECT_ROOT, 'data', 'metadata.csv')
 ERROR_LOG_PATH = f'{LOG_DIR}/stock_download_errors.csv'
 TAIEX_CODE = 'TAIEX'
-TAIEX_HISTORY_URL = 'https://www.twse.com.tw/rwd/zh/TAIEX/MI_5MINS_HIST'
 TWSE_STOCK_DAY_URL = 'https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY'
 TWSE_MI_INDEX_URL = 'https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX'
 TWSE_STOCK_DAY_MIN_DATE = date(2010, 1, 4)
@@ -61,6 +61,20 @@ PRICE_COLUMNS = [
 ]
 
 
+@dataclass
+class DownloadSettings:
+    '''Runtime defaults shared by the price downloader entry points.'''
+
+    throttle_min_seconds: float = 0.2
+    throttle_max_seconds: float = 0.8
+    max_retries: int = 3
+    retry_backoff_seconds: float = 10.0
+    is_plot: bool = False
+
+
+DOWNLOAD_SETTINGS = DownloadSettings()
+
+
 def _patch_twstock_extra_columns():
     '''
     twstock 1.4.0 expects 9 TWSE/TPEX data columns.  TWSE currently returns an
@@ -81,53 +95,48 @@ def _patch_twstock_extra_columns():
         fetcher._stock_analyse_patched = True
 
 
-_patch_twstock_extra_columns()
-
-
-def get_config_value(name, default):
-    '''
-    Return a config value with a default for backward compatibility.
-    '''
-    return getattr(cfg, name, default)
-
-
-def find_latest_cached_csv(stock_tar, start_time):
+def find_latest_cached_csv(stock_tar):
     '''
     Return the newest cached CSV for a stock, if one exists.
     '''
-    pattern = f'{DATA_DIR}/{stock_tar}_{start_time}_to_*.csv'
-    cached_files = sorted(glob.glob(pattern))
+    cached_files = get_stock_existing_paths(stock_tar)
     return cached_files[-1] if cached_files else None
 
 
-def get_stock_output_path(stock_tar, start_time, end_time):
+def safe_filename_part(value):
+    '''
+    Return a filesystem-safe filename component.
+    '''
+    cleaned = re.sub(r'[\\/:*?"<>|]+', '_', str(value or '')).strip()
+    cleaned = re.sub(r'\s+', '_', cleaned)
+    return cleaned.strip(' .') or 'Unknown'
+
+
+def get_metadata_name_map(metadata_path=METADATA_PATH):
+    '''
+    Return metadata code to short-name mapping.
+    '''
+    if not os.path.exists(metadata_path):
+        return {}
+
+    df_metadata = read_csv_canonical(metadata_path, dtype={'Code': str}).fillna('')
+    if 'Code' not in df_metadata.columns or 'Name' not in df_metadata.columns:
+        return {}
+
+    return {
+        str(row['Code']).strip(): str(row['Name']).strip()
+        for _, row in df_metadata.iterrows()
+        if str(row['Code']).strip()
+    }
+
+
+def get_stock_output_path(stock_tar):
     '''
     Return the expected stock output CSV path.
     '''
-    return f'{DATA_DIR}/{stock_tar}_{start_time}_to_{end_time}.csv'
-
-
-def get_taiex_output_path(start_time, end_time):
-    '''
-    Return the expected TAIEX output CSV path.
-    '''
-    return get_stock_output_path(TAIEX_CODE, start_time, end_time)
-
-
-def iter_year_months(start_year, start_month, end_year, end_month):
-    '''
-    Yield year/month pairs from start through end, inclusive.
-    '''
-    year = start_year
-    month = start_month
-
-    while (year, month) <= (end_year, end_month):
-        yield year, month
-        month += 1
-
-        if month > 12:
-            year += 1
-            month = 1
+    name = get_metadata_name_map().get(str(stock_tar).strip(), '')
+    suffix = safe_filename_part(name) if name else str(stock_tar).strip()
+    return os.path.join(DATA_DIR, f'{stock_tar}_{suffix}.csv')
 
 
 def parse_roc_date(value):
@@ -170,13 +179,6 @@ def parse_metadata_start(value):
             pass
 
     raise ValueError(f'Invalid metadata Start date: {value!r}')
-
-
-def month_start(value):
-    '''
-    Return the first day of value's month.
-    '''
-    return date(value.year, value.month, 1)
 
 
 def format_year_month(value):
@@ -222,80 +224,6 @@ def parse_twse_signed_number(sign_value, number_value):
     if '-' in sign:
         return -abs(number)
     return number
-
-
-def fetch_taiex_month(session, year, month):
-    '''
-    Fetch one month of TAIEX OHLC data from TWSE.
-    '''
-    response = session.get(
-        TAIEX_HISTORY_URL,
-        params={
-            'date': f'{year}{month:02d}01',
-            'response': 'json',
-        },
-        headers={
-            'User-Agent': (
-                'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
-                'stock_analyse/1.0'
-            ),
-        },
-        timeout=30,
-    )
-    response.raise_for_status()
-
-    try:
-        payload = response.json()
-    except ValueError as exc:
-        snippet = response.text[:120].replace('\n', ' ')
-        raise ValueError(
-            f'TWSE TAIEX returned non-JSON for {year}-{month:02d}: {snippet}'
-        ) from exc
-
-    if payload.get('stat') != 'OK':
-        raise ValueError(
-            f'TWSE TAIEX request failed for {year}-{month:02d}: '
-            f"{payload.get('stat')}"
-        )
-
-    rows = []
-    for raw_row in payload.get('data', []):
-        rows.append({
-            'Date': parse_roc_date(raw_row[0]),
-            'Open': parse_twse_number(raw_row[1]),
-            'High': parse_twse_number(raw_row[2]),
-            'Low': parse_twse_number(raw_row[3]),
-            'Close': parse_twse_number(raw_row[4]),
-        })
-
-    return rows
-
-
-def fetch_taiex_month_with_retries(session, year, month):
-    '''
-    Fetch one month of TAIEX OHLC data with retry backoff.
-    '''
-    max_retries = get_config_value('max_retries', 3)
-    retry_backoff = get_config_value('retry_backoff_seconds', 10)
-    last_error = None
-
-    for attempt in range(1, max_retries + 1):
-        try:
-            return fetch_taiex_month(session, year, month)
-        except Exception as exc:
-            last_error = exc
-
-            if attempt >= max_retries:
-                break
-
-            print(
-                f'Fetch failed for TAIEX {year}-{month:02d} '
-                f'(attempt {attempt}/{max_retries}): {exc}'
-            )
-            print(f'Retrying after {retry_backoff} seconds.')
-            time.sleep(retry_backoff)
-
-    raise last_error
 
 
 def fetch_twse_stock_month(session, stock_tar, year, month):
@@ -354,67 +282,6 @@ def fetch_twse_stock_month(session, stock_tar, year, month):
         })
 
     return rows
-
-
-def fetch_twse_stock_month_with_retries(session, stock_tar, year, month):
-    '''
-    Fetch one STOCK_DAY month with retry backoff.
-    '''
-    max_retries = get_config_value('max_retries', 3)
-    retry_backoff = get_config_value('retry_backoff_seconds', 10)
-    last_error = None
-
-    for attempt in range(1, max_retries + 1):
-        try:
-            return fetch_twse_stock_month(session, stock_tar, year, month)
-        except Exception as exc:
-            last_error = exc
-
-            if attempt >= max_retries:
-                break
-
-            print(
-                f'Fetch failed for {stock_tar} {year}-{month:02d} '
-                f'(attempt {attempt}/{max_retries}): {exc}'
-            )
-            print(f'Retrying after {retry_backoff} seconds.')
-            time.sleep(retry_backoff)
-
-    raise last_error
-
-
-def fetch_twse_stock_day_data(stock_tar, start_date, end_date=None):
-    '''
-    Fetch TWSE STOCK_DAY rows from start_date through end_date.
-    '''
-    if end_date is None:
-        end_date = datetime.now().date()
-
-    rows = []
-    with requests.Session() as session:
-        for year, month in iter_year_months(
-            start_date.year,
-            start_date.month,
-            end_date.year,
-            end_date.month,
-        ):
-            print(f'Fetching {stock_tar} {year}-{month:02d}.')
-            rows.extend(
-                fetch_twse_stock_month_with_retries(
-                    session,
-                    stock_tar,
-                    year,
-                    month,
-                )
-            )
-            sleep_between_downloads()
-
-    if not rows:
-        return pd.DataFrame(columns=PRICE_COLUMNS)
-
-    df_stock = pd.DataFrame(rows)
-    df_stock = ensure_price_columns(df_stock)
-    return normalize_price_dates(df_stock)
 
 
 def find_mi_index_price_tables(payload):
@@ -501,8 +368,8 @@ def fetch_mi_index_day_with_retries(session, query_date):
     '''
     Fetch one MI_INDEX trading day with retry backoff.
     '''
-    max_retries = get_config_value('max_retries', 3)
-    retry_backoff = get_config_value('retry_backoff_seconds', 10)
+    max_retries = DOWNLOAD_SETTINGS.max_retries
+    retry_backoff = DOWNLOAD_SETTINGS.retry_backoff_seconds
     last_error = None
 
     for attempt in range(1, max_retries + 1):
@@ -597,8 +464,8 @@ def fetch_mi_stock_day_with_retries(session, query_date, target_codes):
     '''
     Fetch one MI_INDEX stock table with retry backoff.
     '''
-    max_retries = get_config_value('max_retries', 3)
-    retry_backoff = get_config_value('retry_backoff_seconds', 10)
+    max_retries = DOWNLOAD_SETTINGS.max_retries
+    retry_backoff = DOWNLOAD_SETTINGS.retry_backoff_seconds
     last_error = None
 
     for attempt in range(1, max_retries + 1):
@@ -636,75 +503,6 @@ def load_trading_days(start_date, end_date=None):
     return [day.date() for day in days]
 
 
-def fetch_taiex_data(start_year=2020, start_month=1, end_year=None, end_month=None):
-    '''
-    Fetch TAIEX daily OHLC data from TWSE.
-    '''
-    if end_year is None or end_month is None:
-        now = datetime.now()
-        end_year = now.year
-        end_month = now.month
-
-    rows = []
-    with requests.Session() as session:
-        for year, month in iter_year_months(
-            start_year,
-            start_month,
-            end_year,
-            end_month,
-        ):
-            print(f'Fetching TAIEX {year}-{month:02d}.')
-            rows.extend(fetch_taiex_month_with_retries(session, year, month))
-            sleep_between_downloads()
-
-    if not rows:
-        raise ValueError('No TAIEX rows were downloaded.')
-
-    df_index = pd.DataFrame(rows).sort_values('Date').reset_index(drop=True)
-    df_index['Date'] = pd.to_datetime(df_index['Date'])
-    df_index['Change'] = df_index['Close'].diff().fillna(0).round(2)
-
-    # MI_5MINS_HIST is an index OHLC feed, so these stock-trading columns are
-    # unavailable. Keep the project CSV schema stable for downstream readers.
-    df_index['Capacity'] = 0
-    df_index['Turnover'] = 0
-    df_index['Transaction'] = 0
-
-    return ensure_price_columns(df_index)
-
-
-def download_taiex_index(
-    start_year=2020,
-    start_month=1,
-    end_year=None,
-    end_month=None,
-    force=False,
-):
-    '''
-    Download/cache TAIEX data in the same CSV schema as stock price files.
-    '''
-    os.makedirs(DATA_DIR, exist_ok=True)
-
-    if end_year is None or end_month is None:
-        now = datetime.now()
-        end_year = now.year
-        end_month = now.month
-
-    start_time = f'{start_year}{start_month:02d}'
-    end_time = f'{end_year}{end_month:02d}'
-    output_path = get_taiex_output_path(start_time, end_time)
-
-    if os.path.exists(output_path) and not force:
-        print(f'TAIEX data {output_path} already exists. Skipping data fetch.')
-        return output_path
-
-    df_index = fetch_taiex_data(start_year, start_month, end_year, end_month)
-    df_index.to_csv(output_path, index=False, encoding='utf-8-sig')
-    print(f'TAIEX data fetched and saved to {output_path}.')
-
-    return output_path
-
-
 def build_stock_catalog():
     '''
     Return metadata for TWSE-listed common stock codes known by twstock.
@@ -738,13 +536,6 @@ def build_stock_catalog():
     return pd.DataFrame(rows).sort_values('Code').reset_index(drop=True)
 
 
-def get_all_stock_codes():
-    '''
-    Return all TWSE-listed common stock codes known by twstock.
-    '''
-    return build_stock_catalog()['Code'].tolist()
-
-
 def load_metadata_catalog(metadata_path=METADATA_PATH):
     '''
     Load the project metadata catalog with stock codes preserved as strings.
@@ -752,7 +543,7 @@ def load_metadata_catalog(metadata_path=METADATA_PATH):
     if not os.path.exists(metadata_path):
         raise FileNotFoundError(f'Metadata CSV does not exist: {metadata_path}')
 
-    df_metadata = pd.read_csv(metadata_path, dtype={'Code': str}).fillna('')
+    df_metadata = read_csv_canonical(metadata_path, dtype={'Code': str}).fillna('')
     required_columns = {'Code', 'Name', 'Type', 'Market', 'Start'}
     missing_columns = required_columns - set(df_metadata.columns)
     if missing_columns:
@@ -805,8 +596,18 @@ def get_stock_existing_paths(stock_tar):
     '''
     Return existing per-stock CSV paths for stock_tar.
     '''
-    pattern = os.path.join(DATA_DIR, f'{stock_tar}_*_to_*.csv')
-    return sorted(glob.glob(pattern))
+    code = str(stock_tar).strip()
+    patterns = [
+        os.path.join(DATA_DIR, f'{code}_*.csv'),
+        os.path.join(DATA_DIR, f'{code}.csv'),
+    ]
+    paths = sorted({
+        path
+        for pattern in patterns
+        for path in glob.glob(pattern)
+        if not os.path.basename(path).startswith('twse_price_')
+    })
+    return paths
 
 
 def read_existing_stock_csvs(stock_tar):
@@ -844,28 +645,18 @@ def combine_price_frames(frames):
 
 def write_price_csv(stock_tar, df_stock):
     '''
-    Write a per-stock CSV using the actual covered month range.
+    Write a per-stock CSV using the CODE_公司簡稱 filename convention.
     '''
     if df_stock.empty:
         raise ValueError(f'No rows available for {stock_tar}.')
 
     os.makedirs(DATA_DIR, exist_ok=True)
     df_stock = normalize_price_dates(df_stock)
-    start_time = format_year_month(df_stock['Date'].min().date())
-    end_time = format_year_month(df_stock['Date'].max().date())
-    output_path = get_stock_output_path(stock_tar, start_time, end_time)
+    output_path = get_stock_output_path(stock_tar)
     df_stock = ensure_price_columns(df_stock)
-    df_stock.to_csv(output_path, index=False, encoding='utf-8-sig')
+    to_csv_storage(df_stock, output_path, index=False, encoding='utf-8-sig')
     print(f'Data merged and saved to {output_path}.')
     return output_path
-
-
-def metadata_download_start(start_value):
-    '''
-    Return the earliest STOCK_DAY-supported date for a metadata row.
-    '''
-    metadata_start = parse_metadata_start(start_value)
-    return max(month_start(metadata_start), month_start(TWSE_STOCK_DAY_MIN_DATE))
 
 
 def reaches_month(df_stock, target_date):
@@ -884,12 +675,25 @@ def build_index_name_map(index_catalog):
     Return MI_INDEX names mapped to metadata codes.
     '''
     name_to_code = {}
+    aliases = {
+        '營造建材類': ['建材營造類指數'],
+        '化學工業類': ['化學類指數'],
+        'EDRIN': ['電子類反向指數'],
+        'EDRL2': ['電子類兩倍槓桿指數'],
+    }
     for _, row in index_catalog.iterrows():
         code = str(row['Code']).strip()
         names = {
             str(row.get('Name', '')).strip(),
             code,
         }
+        for base_name in list(names):
+            if ' ' in base_name:
+                names.add(base_name.replace(' ', ''))
+            if base_name.endswith('類') and not base_name.endswith('類指數'):
+                names.add(f'{base_name}指數')
+        for alias in aliases.get(code, []) + aliases.get(str(row.get('Name', '')).strip(), []):
+            names.add(alias)
         if code == TAIEX_CODE:
             names.add('發行量加權股價指數')
 
@@ -1017,7 +821,7 @@ def download_metadata_stocks_bulk(stock_catalog, force=False):
     return stats
 
 
-def download_metadata_indices(index_catalog, force=False):
+def download_metadata_indices(index_catalog, force=False, min_start_date=None):
     '''
     Download metadata index close histories from daily TWSE MI_INDEX data.
     '''
@@ -1039,19 +843,28 @@ def download_metadata_indices(index_catalog, force=False):
     }
     rows_by_code = {str(row['Code']).strip(): [] for _, row in index_catalog.iterrows()}
     active_rows = []
+    resume_start_by_code = {}
 
     for _, row in index_catalog.iterrows():
         code = str(row['Code']).strip()
         start_date = index_download_start(row.get('Start', ''))
+        if min_start_date is not None:
+            start_date = max(start_date, min_start_date)
         existing_df = read_existing_stock_csvs(code)
-        if not force and reaches_month(existing_df, start_date):
-            print(
-                f'{code} existing index cache already reaches '
-                f'{format_year_month(start_date)}. Skipping data fetch.'
-            )
-            stats['skipped'] += 1
-            continue
+        if not force and not existing_df.empty:
+            latest = normalize_price_dates(existing_df)['Date'].max().date()
+            if latest >= datetime.now().date():
+                print(
+                    f'{code} existing index cache is current through '
+                    f'{latest.isoformat()}. Skipping data fetch.'
+                )
+                stats['skipped'] += 1
+                continue
+            start_date = latest + timedelta(days=1)
+            if min_start_date is not None:
+                start_date = max(start_date, min_start_date)
 
+        resume_start_by_code[code] = start_date
         active_rows.append(row)
 
     if not active_rows:
@@ -1059,14 +872,14 @@ def download_metadata_indices(index_catalog, force=False):
 
     active_catalog = pd.DataFrame(active_rows)
     start_dates = [
-        index_download_start(row.get('Start', ''))
+        resume_start_by_code[str(row['Code']).strip()]
         for _, row in active_catalog.iterrows()
     ]
     fetch_start = min(start_dates)
     trading_days = load_trading_days(fetch_start)
     name_to_code = build_index_name_map(active_catalog)
     code_start = {
-        str(row['Code']).strip(): index_download_start(row.get('Start', ''))
+        str(row['Code']).strip(): resume_start_by_code[str(row['Code']).strip()]
         for _, row in active_catalog.iterrows()
     }
 
@@ -1074,13 +887,29 @@ def download_metadata_indices(index_catalog, force=False):
         f'Fetching MI_INDEX for {len(trading_days)} trading days '
         f'from {fetch_start.isoformat()}.'
     )
+    consecutive_failures = 0
+    max_consecutive_failures = 20
     with requests.Session() as session:
         for index, trading_day in enumerate(trading_days, start=1):
             print(
                 f'[{index}/{len(trading_days)}] Fetching MI_INDEX '
                 f'{trading_day.isoformat()}.'
             )
-            day_rows = fetch_mi_index_day_with_retries(session, trading_day)
+            try:
+                day_rows = fetch_mi_index_day_with_retries(session, trading_day)
+            except Exception as exc:
+                consecutive_failures += 1
+                print(f'Failed MI_INDEX {trading_day.isoformat()}: {exc}')
+                if consecutive_failures >= max_consecutive_failures:
+                    print(
+                        'Stopping index MI_INDEX fetch after '
+                        f'{consecutive_failures} consecutive failures.'
+                    )
+                    break
+                sleep_between_downloads()
+                continue
+
+            consecutive_failures = 0
             for index_name, row_data in day_rows.items():
                 code = name_to_code.get(index_name)
                 if not code or trading_day < code_start[code]:
@@ -1108,7 +937,7 @@ def write_stock_metadata(catalog_df):
     Save stock metadata to a separate catalog CSV.
     '''
     os.makedirs(DATA_DIR, exist_ok=True)
-    catalog_df.to_csv(METADATA_PATH, index=False, encoding='utf-8-sig')
+    to_csv_storage(catalog_df, METADATA_PATH, index=False, encoding='utf-8-sig')
     print(f'Stock metadata saved to {METADATA_PATH}.')
 
 
@@ -1123,8 +952,8 @@ def sleep_between_downloads():
     '''
     Sleep for a randomized throttle interval between network download attempts.
     '''
-    min_seconds = get_config_value('throttle_min_seconds', 1)
-    max_seconds = get_config_value('throttle_max_seconds', 3)
+    min_seconds = DOWNLOAD_SETTINGS.throttle_min_seconds
+    max_seconds = DOWNLOAD_SETTINGS.throttle_max_seconds
 
     if max_seconds < min_seconds:
         min_seconds, max_seconds = max_seconds, min_seconds
@@ -1165,6 +994,7 @@ def fetch_stock_data(stock_tar):
     '''
     # Create a Stock object without the eager 31-day fetch.  The eager fetch
     # can fail before fetch_from gets a chance to run on some twstock versions.
+    _patch_twstock_extra_columns()
     stock = twstock.Stock(stock_tar, initial_fetch=False)
     target_price = stock.fetch_from(START_YEAR, START_MONTH)
 
@@ -1175,8 +1005,8 @@ def fetch_stock_data_with_retries(stock_tar):
     '''
     Fetch stock data with retry backoff and polite throttling.
     '''
-    max_retries = get_config_value('max_retries', 3)
-    retry_backoff = get_config_value('retry_backoff_seconds', 10)
+    max_retries = DOWNLOAD_SETTINGS.max_retries
+    retry_backoff = DOWNLOAD_SETTINGS.retry_backoff_seconds
     last_error = None
 
     for attempt in range(1, max_retries + 1):
@@ -1204,7 +1034,7 @@ def read_cached_stock_csv(csv_path):
     '''
     Read a cached stock CSV.
     '''
-    return pd.read_csv(csv_path, parse_dates=['Date'])
+    return read_csv_canonical(csv_path, parse_dates=['Date'])
 
 
 def ensure_price_columns(df_stock):
@@ -1230,8 +1060,8 @@ def load_or_download_stock(stock_tar, is_plot=False):
 
     start_time = f'{START_YEAR}{str(START_MONTH).zfill(2)}'
     end_time = datetime.now().strftime('%Y%m')
-    fn_out = get_stock_output_path(stock_tar, start_time, end_time)
-    cached_fn = find_latest_cached_csv(stock_tar, start_time)
+    fn_out = get_stock_output_path(stock_tar)
+    cached_fn = find_latest_cached_csv(stock_tar)
 
     if os.path.exists(fn_out):
         print(f'Stock data {fn_out} already exists. Skipping data fetch.')
@@ -1253,7 +1083,7 @@ def load_or_download_stock(stock_tar, is_plot=False):
             else:
                 raise
         else:
-            df_stock.to_csv(fn_out, index=False, encoding='utf-8-sig')
+            to_csv_storage(df_stock, fn_out, index=False, encoding='utf-8-sig')
             print(f'Data fetched and saved to {fn_out}.')
             source_csv_path = fn_out
             result = 'downloaded'
@@ -1269,48 +1099,12 @@ def load_or_download_stock(stock_tar, is_plot=False):
     return result
 
 
-def load_or_download_metadata_price(row, force=False):
-    '''
-    Download/cache one metadata catalog instrument.
-    '''
-    stock_tar = str(row['Code']).strip()
-    instrument_type = str(row.get('Type', '')).strip()
-
-    if instrument_type == INDEX_TYPE:
-        if stock_tar != TAIEX_CODE:
-            raise ValueError(
-                'Only TAIEX index OHLC history is supported by this downloader.'
-            )
-
-        start_date = parse_metadata_start(row.get('Start', ''))
-        start_date = max(month_start(start_date), date(1999, 1, 1))
-        download_taiex_index(
-            start_date.year,
-            start_date.month,
-            force=force,
-        )
-        return 'downloaded'
-
-    start_date = metadata_download_start(row.get('Start', ''))
-    existing_df = read_existing_stock_csvs(stock_tar)
-
-    if not force and reaches_month(existing_df, start_date):
-        print(
-            f'{stock_tar} existing cache already reaches '
-            f'{format_year_month(start_date)}. Skipping data fetch.'
-        )
-        return 'skipped'
-
-    fetched_df = fetch_twse_stock_day_data(stock_tar, start_date)
-    merged_df = combine_price_frames([existing_df, fetched_df])
-    write_price_csv(stock_tar, merged_df)
-    return 'downloaded'
-
-
 def download_metadata_prices(
     metadata_path=METADATA_PATH,
     include_etf=True,
     include_index=False,
+    only_index=False,
+    min_start_date=None,
     codes=None,
     max_instruments=None,
     force=False,
@@ -1328,6 +1122,8 @@ def download_metadata_prices(
     )
     index_catalog = catalog[catalog['Type'].eq(INDEX_TYPE)].copy()
     stock_catalog = catalog[~catalog['Type'].eq(INDEX_TYPE)].copy()
+    if only_index:
+        stock_catalog = stock_catalog.iloc[0:0].copy()
     stock_name_by_code = get_stock_name_map(stock_catalog)
 
     stats = {
@@ -1356,7 +1152,11 @@ def download_metadata_prices(
             })
 
     if include_index and not index_catalog.empty:
-        index_stats = download_metadata_indices(index_catalog, force=force)
+        index_stats = download_metadata_indices(
+            index_catalog,
+            force=force,
+            min_start_date=min_start_date,
+        )
         for key in ('skipped', 'downloaded', 'fallback', 'failed'):
             stats[key] += index_stats[key]
 
@@ -1391,7 +1191,10 @@ def download_all_stocks(stock_list, stock_name_by_code):
         print(f'[{index}/{len(stock_list)}] Processing stock {stock_tar}.')
 
         try:
-            result = load_or_download_stock(stock_tar, is_plot=cfg.is_plot)
+            result = load_or_download_stock(
+                stock_tar,
+                is_plot=DOWNLOAD_SETTINGS.is_plot,
+            )
             stats[result] += 1
         except Exception as exc:
             stats['failed'] += 1
@@ -1450,6 +1253,11 @@ def parse_args():
         help='Attempt supported index downloads from metadata.csv.',
     )
     parser.add_argument(
+        '--only-index',
+        action='store_true',
+        help='Only process index rows from metadata.csv.',
+    )
+    parser.add_argument(
         '--codes',
         nargs='*',
         help='Optional list of metadata codes to download.',
@@ -1474,6 +1282,10 @@ def parse_args():
         type=float,
         help='Override maximum seconds to sleep between network requests.',
     )
+    parser.add_argument(
+        '--min-start-date',
+        help='Clamp metadata backfill start dates to this YYYY-MM-DD date.',
+    )
     return parser.parse_args()
 
 
@@ -1481,15 +1293,24 @@ if __name__ == '__main__':
     args = parse_args()
 
     if args.throttle_min is not None:
-        cfg.throttle_min_seconds = args.throttle_min
+        DOWNLOAD_SETTINGS.throttle_min_seconds = args.throttle_min
     if args.throttle_max is not None:
-        cfg.throttle_max_seconds = args.throttle_max
+        DOWNLOAD_SETTINGS.throttle_max_seconds = args.throttle_max
+    if args.only_index:
+        args.include_index = True
+    min_start_date = (
+        datetime.strptime(args.min_start_date, '%Y-%m-%d').date()
+        if args.min_start_date
+        else None
+    )
 
     if args.from_metadata:
         download_metadata_prices(
             metadata_path=args.metadata,
             include_etf=args.include_etf,
             include_index=args.include_index,
+            only_index=args.only_index,
+            min_start_date=min_start_date,
             codes=args.codes,
             max_instruments=args.max_instruments,
             force=args.force,
@@ -1498,11 +1319,7 @@ if __name__ == '__main__':
         catalog_df = build_stock_catalog()
         write_stock_metadata(catalog_df)
 
-        stock_list = (
-            catalog_df['Code'].tolist()
-            if cfg.download_all_stocks
-            else cfg.stock_list
-        )
+        stock_list = catalog_df['Code'].tolist()
         stock_name_by_code = get_stock_name_map(catalog_df)
 
         print(f'Preparing to download/load {len(stock_list)} stocks.')

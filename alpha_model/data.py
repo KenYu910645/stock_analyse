@@ -7,6 +7,8 @@ from typing import Any
 
 import pandas as pd
 
+from column_schema import read_csv_canonical
+
 
 NORMALIZED_COLUMNS = [
     "date",
@@ -24,7 +26,7 @@ TWSE_MARKET = "\u4e0a\u5e02"
 
 
 def stock_id_from_path(csv_path: Path) -> str:
-    """Extract stock id from filenames like 2330_202005_to_202605.csv."""
+    """Extract stock id from filenames like 2330_台積電.csv."""
     return csv_path.stem.split("_", 1)[0]
 
 
@@ -39,7 +41,7 @@ def load_price_csv(csv_path: Path, data_config: dict[str, Any]) -> pd.DataFrame:
         data_config["volume_col"]: "volume",
         data_config["turnover_col"]: "turnover",
     }
-    df = pd.read_csv(csv_path)
+    df = read_csv_canonical(csv_path)
     missing = [source for source in column_map if source not in df.columns]
     if missing:
         raise ValueError(f"{csv_path} missing required columns: {missing}")
@@ -55,8 +57,14 @@ def load_price_csv(csv_path: Path, data_config: dict[str, Any]) -> pd.DataFrame:
 def load_price_data(config: dict[str, Any], stock_limit: int | None = None) -> pd.DataFrame:
     """Load all adjusted price CSV files from the configured directory."""
     price_dir = Path(config["data"]["price_dir"])
-    csv_paths = sorted(price_dir.glob("*_to_*.csv"))
-    allowed_codes = load_twse_common_stock_codes(config["data"].get("metadata_path"))
+    csv_paths = sorted(
+        csv_path for csv_path in price_dir.glob("*.csv")
+        if not csv_path.name.startswith("twse_price_")
+    )
+    allow_unfiltered = bool(config["data"].get("allow_unfiltered_universe", False))
+    allowed_codes = None
+    if not allow_unfiltered:
+        allowed_codes = load_twse_common_stock_codes(config["data"].get("metadata_path"))
     if allowed_codes is not None:
         csv_paths = [csv_path for csv_path in csv_paths if stock_id_from_path(csv_path) in allowed_codes]
     if stock_limit is not None:
@@ -90,25 +98,38 @@ def load_price_data(config: dict[str, Any], stock_limit: int | None = None) -> p
     )
 
 
-def load_twse_common_stock_codes(metadata_path: str | None) -> set[str] | None:
-    """Return TWSE listed common stock codes from metadata when available."""
+def load_twse_common_stock_codes(metadata_path: str | None) -> set[str]:
+    """Return TWSE listed common-stock codes, failing closed on bad metadata."""
     if not metadata_path:
-        return None
+        raise ValueError(
+            "A metadata_path is required for the default TWSE listed common-stock universe. "
+            "Set data.allow_unfiltered_universe=true only for an intentional broad load."
+        )
 
     path = Path(metadata_path)
     if not path.exists():
-        return None
+        raise FileNotFoundError(
+            f"Metadata catalog does not exist: {path}. "
+            "Set data.allow_unfiltered_universe=true only for an intentional broad load."
+        )
 
-    metadata_df = pd.read_csv(path, dtype={"Code": str})
+    try:
+        metadata_df = read_csv_canonical(path, dtype={"Code": str})
+    except Exception as exc:
+        raise ValueError(f"Could not read metadata catalog {path}: {exc}") from exc
     required = {"Code", "Type", "Market"}
-    if not required.issubset(metadata_df.columns):
-        return None
+    missing = required - set(metadata_df.columns)
+    if missing:
+        raise ValueError(f"Metadata catalog {path} missing required columns: {sorted(missing)}")
 
     filtered = metadata_df[
         metadata_df["Type"].eq(COMMON_STOCK_TYPE)
         & metadata_df["Market"].eq(TWSE_MARKET)
     ]
-    return set(filtered["Code"].astype(str))
+    codes = set(filtered["Code"].astype(str).str.strip()) - {""}
+    if not codes:
+        raise ValueError(f"Metadata catalog {path} contains no TWSE listed common stocks.")
+    return codes
 
 
 def filter_date_range(

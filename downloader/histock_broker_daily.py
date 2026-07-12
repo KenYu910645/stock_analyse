@@ -11,13 +11,14 @@ import argparse
 import os
 import random
 import re
-import sys
 import time
 from datetime import date, datetime, timedelta
 
 import pandas as pd
 import requests
 from lxml import html
+
+from column_schema import read_csv_canonical, to_csv_storage
 
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -141,7 +142,7 @@ def iter_weekdays_desc(start_date, end_date):
 
 
 def load_listed_stocks(stock_codes=None):
-    df = pd.read_csv(STOCK_METADATA_PATH, dtype=str).fillna('')
+    df = read_csv_canonical(STOCK_METADATA_PATH, dtype=str).fillna('')
     mask = (
         (df['Market'] == LISTED_MARKET)
         & (df['Type'] == COMMON_STOCK_TYPE)
@@ -306,7 +307,7 @@ def date_has_data(session, query_date, probe_codes, throttle_min, throttle_max):
 
 def write_rows(output_path, rows):
     df = pd.DataFrame(rows, columns=OUTPUT_COLUMNS)
-    df.to_csv(output_path, index=False, encoding='utf-8-sig')
+    to_csv_storage(df, output_path, index=False, encoding='utf-8-sig')
     return len(df)
 
 

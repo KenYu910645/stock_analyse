@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from column_schema import read_csv_canonical
 from stock_correlation_analysis import DEFAULT_PRICE_PATH, DEFAULT_TAIEX_PATH
 from strategies.pair_trading import PairTradingStrategy
 
@@ -34,7 +35,10 @@ def parse_args() -> argparse.Namespace:
 
 
 def latest_price_path(price_dir: Path, stock_id: str) -> Path:
-    paths = sorted(price_dir.glob(f"{stock_id}_*_to_*.csv"))
+    paths = sorted(
+        path for path in price_dir.glob(f"{stock_id}_*.csv")
+        if not path.name.startswith("twse_price_")
+    )
     if not paths:
         raise FileNotFoundError(f"No adjusted price CSV found for {stock_id}.")
     return paths[-1]
@@ -42,8 +46,8 @@ def latest_price_path(price_dir: Path, stock_id: str) -> Path:
 
 def load_adjusted_close(price_dir: Path, stock_id: str) -> pd.DataFrame:
     path = latest_price_path(price_dir, stock_id)
-    df = pd.read_csv(path)
-    close_col = "Close_adj" if "Close_adj" in df.columns else "Close"
+    df = read_csv_canonical(path)
+    close_col = "close_adj" if "close_adj" in df.columns else "Close_adj" if "Close_adj" in df.columns else "Close"
     df = df[["Date", close_col]].copy()
     df.columns = ["Date", stock_id]
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
@@ -61,7 +65,7 @@ def build_pair_price_df(price_dir: Path, stock_a: str, stock_b: str, start_date:
 
 
 def load_taiex(taiex_path: Path, start_date: pd.Timestamp) -> pd.DataFrame:
-    df = pd.read_csv(taiex_path)
+    df = read_csv_canonical(taiex_path)
     df = df[["Date", "Close"]].copy()
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
     df["Close"] = pd.to_numeric(df["Close"], errors="coerce")

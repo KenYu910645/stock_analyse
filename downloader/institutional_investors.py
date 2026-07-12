@@ -12,6 +12,8 @@ from datetime import date, datetime, timedelta
 import pandas as pd
 import requests
 
+from column_schema import normalize_date_text, read_csv_canonical, to_csv_storage
+
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 DATA_DIR = os.path.join(PROJECT_ROOT, 'data')
@@ -130,7 +132,7 @@ def load_listed_common_stock_codes():
     '''
     Load listed common-stock codes from the project metadata.
     '''
-    df_metadata = pd.read_csv(STOCK_METADATA_PATH, dtype={'Code': str})
+    df_metadata = read_csv_canonical(STOCK_METADATA_PATH, dtype={'Code': str})
     df_metadata['Code'] = df_metadata['Code'].astype(str).str.strip()
     mask = (
         (df_metadata['Type'] == COMMON_STOCK_TYPE)
@@ -295,7 +297,7 @@ def normalize_dataframe(rows):
     df = pd.DataFrame(rows, columns=OUTPUT_COLUMNS)
     df = df.replace({'': pd.NA, '-': pd.NA})
 
-    df['Date'] = pd.to_datetime(df['Date'], format='%Y%m%d')
+    df['Date'] = pd.to_datetime(df['Date'].map(normalize_date_text), errors='raise')
     df['Code'] = df['Code'].astype(str)
 
     for column in NUMERIC_COLUMNS:
@@ -404,7 +406,7 @@ def main():
         raise ValueError('No TWSE institutional-investor rows were downloaded.')
 
     df = normalize_dataframe(rows)
-    df.to_csv(output_path, index=False, encoding='utf-8-sig')
+    to_csv_storage(df, output_path, index=False, encoding='utf-8-sig')
     failed_log_path = log_failed_dates(failed_dates, start_date, end_date)
 
     print('Download summary:')

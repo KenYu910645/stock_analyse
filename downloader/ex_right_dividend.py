@@ -14,6 +14,8 @@ from datetime import date, datetime
 import pandas as pd
 import requests
 
+from column_schema import to_csv_storage
+
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 DATA_DIR = os.path.join(PROJECT_ROOT, 'data', 'dividend')
@@ -543,7 +545,7 @@ def main():
     if df.empty:
         raise ValueError('No TWSE ex-right/ex-dividend rows were downloaded.')
 
-    df.to_csv(output_path, index=False, encoding='utf-8-sig')
+    to_csv_storage(df, output_path, index=False, encoding='utf-8-sig')
     print(f'rows_saved={len(df)}')
     print(f'output_path={output_path}')
 

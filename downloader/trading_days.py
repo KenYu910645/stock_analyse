@@ -11,7 +11,7 @@ import os
 import random
 import time
 import calendar
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 import requests
@@ -42,8 +42,11 @@ def parse_args():
     )
     parser.add_argument(
         '--start-date',
-        default=TWSE_ONLINE_START_DATE.isoformat(),
-        help='Start date in YYYY-MM-DD. TWSE online FMTQIK starts at 1990-01-04.',
+        default=None,
+        help=(
+            'Start date in YYYY-MM-DD. Default: refresh incrementally from '
+            'the existing output, or from 1990-01-04 if no output exists.'
+        ),
     )
     parser.add_argument(
         '--end-date',
@@ -60,6 +63,26 @@ def parse_args():
 
 def parse_iso_date(value):
     return datetime.strptime(value, '%Y-%m-%d').date()
+
+
+def load_existing_trading_days(output_path):
+    if not os.path.exists(output_path):
+        return pd.DataFrame(columns=['date'])
+    existing = pd.read_csv(output_path, dtype=str).fillna('')
+    if 'date' not in existing.columns:
+        existing = existing.rename(columns={existing.columns[0]: 'date'})
+    existing['date'] = pd.to_datetime(existing['date'], errors='coerce').dt.date
+    existing = existing.dropna(subset=['date'])
+    existing['date'] = existing['date'].map(lambda value: value.isoformat())
+    return existing[['date']].drop_duplicates().sort_values('date').reset_index(drop=True)
+
+
+def default_start_date(output_path):
+    existing = load_existing_trading_days(output_path)
+    if existing.empty:
+        return TWSE_ONLINE_START_DATE
+    latest = pd.to_datetime(existing['date'], errors='coerce').dropna().max().date()
+    return max(latest - timedelta(days=31), TWSE_ONLINE_START_DATE)
 
 
 def month_start(value):
@@ -136,7 +159,7 @@ def fetch_month(session, month_date, end_date):
 
         try:
             payload = response.json()
-        except ValueError as exc:
+        except ValueError:
             snippet = response.text[:120].replace('\n', ' ')
             errors.append(f'invalid JSON on {query_date}: {snippet}')
             continue
@@ -201,7 +224,8 @@ def download_trading_days(start_date, end_date):
 
 def main():
     args = parse_args()
-    start_date = parse_iso_date(args.start_date)
+    explicit_start = args.start_date is not None
+    start_date = parse_iso_date(args.start_date) if explicit_start else default_start_date(args.output)
     end_date = parse_iso_date(args.end_date)
 
     if end_date < start_date:
@@ -209,6 +233,11 @@ def main():
 
     os.makedirs(os.path.dirname(args.output), exist_ok=True)
     df = download_trading_days(start_date, end_date)
+    if not explicit_start:
+        existing = load_existing_trading_days(args.output)
+        if not existing.empty:
+            df = pd.concat([existing, df], ignore_index=True)
+            df = df.drop_duplicates().sort_values('date').reset_index(drop=True)
     df.to_csv(args.output, index=False, encoding='utf-8-sig')
 
     print(

@@ -8,27 +8,24 @@ from __future__ import annotations
 
 import argparse
 import re
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterable
 
-import matplotlib
-
-matplotlib.use("Agg")
-
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib import font_manager
 from scipy.cluster.hierarchy import leaves_list, linkage
 from scipy.spatial.distance import squareform
 
+from column_schema import read_csv_canonical
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-DEFAULT_PRICE_PATH = PROJECT_ROOT / "data" / "adj_price"
+DEFAULT_PRICE_PATH = PROJECT_ROOT / "data" / "price"
 DEFAULT_METADATA_PATH = PROJECT_ROOT / "data" / "metadata.csv"
-DEFAULT_TAIEX_PATH = PROJECT_ROOT / "data" / "price" / "TAIEX_202001_to_202606.csv"
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "output" / "price_correlation" / "raw"
-DEFAULT_RESIDUAL_OUTPUT_DIR = PROJECT_ROOT / "output" / "price_correlation" / "residual_market"
+DEFAULT_TAIEX_PATH = PROJECT_ROOT / "data" / "price" / "TAIEX_發行量加權股價指數.csv"
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data_viz" / "price_correlation" / "raw"
+DEFAULT_RESIDUAL_OUTPUT_DIR = PROJECT_ROOT / "data_viz" / "price_correlation" / "residual_market"
 DEFAULT_REPRESENTATIVES_PER_INDUSTRY = 3
 DEFAULT_MAX_INDUSTRY_HEATMAP_STOCKS = 120
 DEFAULT_PER_STOCK_TOP_N = 15
@@ -48,8 +45,16 @@ REPRESENTATIVE_STOCKS = {
 ROLLING_COMPARE_STOCKS = ["2454", "2303", "2317", "2881", "2412", "1216"]
 
 
-def configure_matplotlib_fonts() -> None:
-    """Prefer an installed CJK font so Taiwan stock names render in charts."""
+@lru_cache(maxsize=1)
+def _get_pyplot():
+    """Load and configure Matplotlib only when a plot is requested."""
+    import matplotlib
+
+    matplotlib.use("Agg")
+
+    import matplotlib.pyplot as pyplot
+    from matplotlib import font_manager
+
     available_fonts = {font.name for font in font_manager.fontManager.ttflist}
     for font_name in [
         "Microsoft JhengHei",
@@ -58,16 +63,14 @@ def configure_matplotlib_fonts() -> None:
         "SimHei",
     ]:
         if font_name in available_fonts:
-            plt.rcParams["font.family"] = font_name
+            pyplot.rcParams["font.family"] = font_name
             break
-    plt.rcParams["axes.unicode_minus"] = False
-
-
-configure_matplotlib_fonts()
+    pyplot.rcParams["axes.unicode_minus"] = False
+    return pyplot
 
 
 def stock_id_from_path(csv_path: Path) -> str:
-    """Extract stock id from filenames like 2330_202005_to_202605.csv."""
+    """Extract stock id from filenames like 2330_台積電.csv."""
     return csv_path.stem.split("_", 1)[0]
 
 
@@ -87,7 +90,7 @@ def load_metadata(metadata_path: str | Path | None = DEFAULT_METADATA_PATH) -> p
     if not path.exists():
         return pd.DataFrame()
 
-    metadata = pd.read_csv(path, dtype={"Code": str})
+    metadata = read_csv_canonical(path, dtype={"Code": str})
     if "Code" not in metadata.columns:
         return pd.DataFrame()
 
@@ -113,8 +116,10 @@ def load_price_data(path: str | Path) -> pd.DataFrame:
     price_path = Path(path)
     if price_path.is_dir():
         frames = []
-        for csv_path in sorted(price_path.glob("*_to_*.csv")):
-            df = pd.read_csv(csv_path)
+        for csv_path in sorted(price_path.glob("*.csv")):
+            if csv_path.name.startswith("twse_price_"):
+                continue
+            df = read_csv_canonical(csv_path)
             df["stock_id"] = stock_id_from_path(csv_path)
             frames.append(df)
         if not frames:
@@ -123,7 +128,7 @@ def load_price_data(path: str | Path) -> pd.DataFrame:
 
     if not price_path.exists():
         raise FileNotFoundError(f"Price data path does not exist: {price_path}")
-    return pd.read_csv(price_path, dtype={"stock_id": str, "Code": str})
+    return read_csv_canonical(price_path, dtype={"stock_id": str, "Code": str})
 
 
 def load_market_returns(path: str | Path) -> pd.Series:
@@ -132,7 +137,7 @@ def load_market_returns(path: str | Path) -> pd.Series:
     if not market_path.exists():
         raise FileNotFoundError(f"Market data path does not exist: {market_path}")
 
-    df = pd.read_csv(market_path)
+    df = read_csv_canonical(market_path)
     required = {"Date", "Close"}
     missing = required - set(df.columns)
     if missing:
@@ -164,7 +169,9 @@ def clean_price_data(
         column_map["Date"] = "date"
     if "Code" in working.columns and "stock_id" not in working.columns:
         column_map["Code"] = "stock_id"
-    if "Close_adj" in working.columns and "adj_close" not in working.columns:
+    if "close_adj" in working.columns and "adj_close" not in working.columns:
+        column_map["close_adj"] = "adj_close"
+    elif "Close_adj" in working.columns and "adj_close" not in working.columns:
         column_map["Close_adj"] = "adj_close"
     elif "Close" in working.columns and "adj_close" not in working.columns:
         column_map["Close"] = "adj_close"
@@ -385,6 +392,7 @@ def plot_group_correlation_heatmap(
     output_path: str | Path | None = None,
 ) -> None:
     """Plot direct industry-to-industry correlation heatmap."""
+    plt = _get_pyplot()
     size = max(10, min(22, 0.42 * len(group_corr) + 5))
     fig, ax = plt.subplots(figsize=(size, size))
     image = ax.imshow(group_corr.values, cmap="RdYlBu_r", vmin=-0.2, vmax=0.8)
@@ -440,15 +448,6 @@ def flatten_stock_groups(stock_groups: dict[str, list[str]]) -> list[str]:
                 ordered.append(stock)
                 seen.add(stock)
     return ordered
-
-
-def build_stock_id_to_group(stock_groups: dict[str, list[str]]) -> dict[str, str]:
-    """Build a stock-id to manual group mapping."""
-    return {
-        stock: group
-        for group, stocks in stock_groups.items()
-        for stock in stocks
-    }
 
 
 def get_representative_stock_list(ret: pd.DataFrame) -> list[str]:
@@ -524,6 +523,7 @@ def calculate_correlation_matrix(ret: pd.DataFrame, stocks: list[str]) -> pd.Dat
 
 
 def _save_or_show(output_path: str | Path | None) -> None:
+    plt = _get_pyplot()
     if output_path:
         path = Path(output_path)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -540,6 +540,7 @@ def _plot_heatmap(
     group_boundaries: Iterable[int] = (),
     annotate_cells: bool | None = None,
 ) -> None:
+    plt = _get_pyplot()
     size = max(8, min(22, 0.38 * len(corr) + 4))
     fig, ax = plt.subplots(figsize=(size, size))
     image = ax.imshow(corr.values, cmap="RdYlBu_r", vmin=-0.2, vmax=0.8)
@@ -704,6 +705,7 @@ def plot_top_correlation_bar(
     output_path: str | Path | None = None,
 ) -> None:
     """Plot top correlations to the target stock as a horizontal bar chart."""
+    plt = _get_pyplot()
     corr_col = f"correlation_to_{target}"
     if corr_col not in corr_df.columns:
         raise ValueError(f"Correlation column missing: {corr_col}")
@@ -749,6 +751,7 @@ def plot_rolling_correlation(
     label_map: dict[str, str] | None = None,
 ) -> None:
     """Plot rolling correlations as line charts."""
+    plt = _get_pyplot()
     fig, ax = plt.subplots(figsize=(12, 7))
     plot_df = rolling_corr.rename(columns=label_map or {})
     target_label = (label_map or {}).get(target, target)
@@ -767,6 +770,7 @@ def plot_correlation_distribution(
     output_path: str | Path | None = None,
 ) -> None:
     """Plot the distribution of pairwise correlations from the upper triangle."""
+    plt = _get_pyplot()
     mask = np.triu(np.ones(corr.shape), k=1).astype(bool)
     values = corr.where(mask).stack().dropna()
 
@@ -805,6 +809,7 @@ def plot_top_peer_matrix_heatmap(
     output_path: str | Path,
 ) -> None:
     """Plot one target stock and top peers as a square correlation heatmap."""
+    plt = _get_pyplot()
     target_label = label_map.get(target, target)
     labels = [label_map.get(str(stock), str(stock)) for stock in matrix.index]
 

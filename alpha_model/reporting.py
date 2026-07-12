@@ -4,8 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import matplotlib.pyplot as plt
 import pandas as pd
+
+try:
+    import matplotlib.pyplot as plt
+except ModuleNotFoundError:  # pragma: no cover - depends on local optional plotting stack.
+    plt = None
 
 
 def ensure_dirs(output_dir: Path, plot_dir: Path) -> None:
@@ -26,8 +30,8 @@ def write_table_outputs(
     factor_stability: pd.DataFrame,
 ) -> None:
     """Persist public table outputs."""
-    factor_values.to_parquet(output_dir / "factor_values.parquet", index=False)
-    future_returns.to_parquet(output_dir / "future_returns.parquet", index=False)
+    write_large_table(factor_values, output_dir / "factor_values.parquet")
+    write_large_table(future_returns, output_dir / "future_returns.parquet")
     ic_summary.to_csv(output_dir / "ic_summary.csv", index=False, encoding="utf-8-sig")
     ic_timeseries.to_csv(output_dir / "ic_timeseries.csv", index=False, encoding="utf-8-sig")
     quantile_returns.to_csv(output_dir / "quantile_returns.csv", index=False, encoding="utf-8-sig")
@@ -35,6 +39,17 @@ def write_table_outputs(
     turnover.to_csv(output_dir / "turnover.csv", index=False, encoding="utf-8-sig")
     coverage.to_csv(output_dir / "coverage.csv", index=False, encoding="utf-8-sig")
     factor_stability.to_csv(output_dir / "factor_stability.csv", index=False, encoding="utf-8-sig")
+
+
+def write_large_table(df: pd.DataFrame, parquet_path: Path) -> Path:
+    """Write a large table as parquet, falling back to pickle."""
+    try:
+        df.to_parquet(parquet_path, index=False)
+        return parquet_path
+    except ImportError:
+        pickle_path = parquet_path.with_suffix(".pkl")
+        df.to_pickle(pickle_path)
+        return pickle_path
 
 
 def _primary_factor(df: pd.DataFrame) -> str | None:
@@ -126,6 +141,9 @@ def write_plots(
     coverage: pd.DataFrame,
 ) -> None:
     """Write public PNG plots."""
+    if plt is None:
+        print("matplotlib is unavailable; skipped alpha model PNG plots.")
+        return
     plot_ic_timeseries(ic_timeseries, plot_dir)
     plot_quantile_returns(quantile_cumulative, plot_dir)
     plot_turnover_coverage(turnover, coverage, plot_dir)

@@ -1,0 +1,46 @@
+data:
+  price_dir: data/price
+  institutional_dir: data/institutional
+  metadata_path: data/metadata.csv
+  allow_unfiltered_universe: false
+  date_col: Date
+  stock_id_from_filename: true
+  open_col: open_adj
+  high_col: high_adj
+  low_col: low_adj
+  close_col: close_adj
+  volume_col: Capacity
+  turnover_col: Turnover
+
+universe:
+  min_price: 5
+  min_avg_turnover_20d: 5000000
+  min_history_days: 120
+
+factor:
+  kind: institutional_trust_flow
+  winsorize_lower: 0.01
+  winsorize_upper: 0.99
+  zscore: true
+  names:
+    - trust_net_value_1d_to_turnover
+    - trust_net_value_3d_to_turnover
+    - trust_net_value_5d_to_turnover
+    - trust_buy_purity_1d
+    - trust_buy_streak_3d
+    - trust_sell_pressure_3d
+
+labels:
+  method: next_open_to_open
+  horizons: [1, 5, 10, 20]
+
+evaluation:
+  quantiles: 5
+  primary_horizon: 5
+  transaction_cost:
+    enabled: false
+    round_trip_cost: 0.006
+
+output:
+  dir: output/alpha_model/trust_flow/tables
+  plot_dir: data_viz/alpha_model/trust_flow/plots

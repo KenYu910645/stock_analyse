@@ -112,7 +112,7 @@ def test_metadata_filter_keeps_only_twse_common_stocks(tmp_path) -> None:
 
 
 def test_generate_reports_smoke(tmp_path) -> None:
-    price_dir = tmp_path / "adj_price"
+    price_dir = tmp_path / "price"
     output_dir = tmp_path / "regime"
     beta_output_dir = tmp_path / "regime_beta"
     price_dir.mkdir()

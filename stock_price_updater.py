@@ -34,8 +34,6 @@ def _patch_twstock_extra_columns():
         fetcher._stock_analyse_patched = True
 
 
-_patch_twstock_extra_columns()
-
 def fetch_latest_stock_price(stock_tar):
     """
     Fetch the latest trading data for a given stock,
@@ -54,6 +52,9 @@ def fetch_latest_stock_price(stock_tar):
     # Set start year and the last full month
     start_year = now.year
     start_month = now.month - 1 if now.month > 1 else 12
+
+    # Patch only when the twstock fetch path is used.
+    _patch_twstock_extra_columns()
 
     # Create a Stock object
     stock = twstock.Stock(stock_tar)

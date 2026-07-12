@@ -1,0 +1,5 @@
+-r requirements.txt
+
+pytest==9.1.0
+ruff==0.15.21
+vulture==2.16

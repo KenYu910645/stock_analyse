@@ -10,6 +10,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pandas as pd
+
+from column_schema import read_csv_canonical
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
@@ -24,7 +26,7 @@ from stock_viz import (
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DATA_DIR = PROJECT_ROOT / 'data'
-PLOT_DIR = PROJECT_ROOT / 'output' / 'backtesting'
+PLOT_DIR = PROJECT_ROOT / 'data_viz' / 'backtesting'
 STRATEGY_DIR = PROJECT_ROOT / 'strategies'
 STOCK_METADATA_PATH = DATA_DIR / 'metadata.csv'
 REQUIRED_COLUMNS = [
@@ -84,17 +86,14 @@ def parse_args():
         default=None,
         help=(
             'Directory for one batch run. Defaults to '
-            'output/backtesting/backtest_run_<timestamp> in --all mode.'
+            'data_viz/backtesting/backtest_run_<timestamp> in --all mode.'
         ),
     )
     return parser.parse_args()
 
 
 def find_latest_stock_csv(stock):
-    patterns = [
-        str(DATA_DIR / f'{stock}_*_to_*.csv'),
-        str(DATA_DIR / 'price' / f'{stock}_*_to_*.csv'),
-    ]
+    patterns = [str(DATA_DIR / 'price' / f'{stock}_*.csv')]
     stock_files = sorted(
         stock_file
         for pattern in patterns
@@ -113,13 +112,34 @@ def get_stock_code_from_csv(csv_path):
 
 
 def get_all_cached_stock_codes():
-    csv_files = [
-        *DATA_DIR.glob('*_to_*.csv'),
-        *(DATA_DIR / 'price').glob('*_to_*.csv'),
-    ]
+    if not STOCK_METADATA_PATH.exists():
+        raise FileNotFoundError(
+            f'Metadata catalog is required for --all: {STOCK_METADATA_PATH}'
+        )
+
+    metadata_df = read_csv_canonical(STOCK_METADATA_PATH, dtype={'Code': str})
+    required_columns = {'Code', 'Type', 'Market'}
+    missing_columns = required_columns.difference(metadata_df.columns)
+    if missing_columns:
+        raise ValueError(
+            f'{STOCK_METADATA_PATH} missing required columns: '
+            f'{sorted(missing_columns)}'
+        )
+
+    listed_codes = set(
+        metadata_df.loc[
+            metadata_df['Type'].eq('股票')
+            & metadata_df['Market'].eq('上市')
+            & metadata_df['Code'].astype(str).str.fullmatch(r'\d{4}'),
+            'Code',
+        ].astype(str)
+    )
+    csv_files = list((DATA_DIR / 'price').glob('*.csv'))
     latest_by_stock = {}
     for csv_path in csv_files:
         stock = get_stock_code_from_csv(csv_path)
+        if stock not in listed_codes:
+            continue
         current_path = latest_by_stock.get(stock)
         if current_path is None or csv_path.name > current_path.name:
             latest_by_stock[stock] = csv_path
@@ -131,7 +151,7 @@ def load_stock_name_map():
     if not STOCK_METADATA_PATH.exists():
         return {}
 
-    metadata_df = pd.read_csv(STOCK_METADATA_PATH, dtype={'Code': str})
+    metadata_df = read_csv_canonical(STOCK_METADATA_PATH, dtype={'Code': str})
     if 'Code' not in metadata_df.columns or 'Name' not in metadata_df.columns:
         return {}
 
@@ -142,7 +162,7 @@ def load_stock_name_map():
 
 def load_stock_data(stock):
     csv_path = find_latest_stock_csv(stock)
-    df_stock = pd.read_csv(csv_path, parse_dates=['Date'])
+    df_stock = read_csv_canonical(csv_path, parse_dates=['Date'])
     return clean_loaded_stock_csv(df_stock), csv_path
 
 

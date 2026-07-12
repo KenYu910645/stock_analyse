@@ -10,13 +10,14 @@ import argparse
 import json
 import os
 import random
-import sys
 import time
 from datetime import date
 from urllib.parse import urlencode
 
 import pandas as pd
 from playwright.sync_api import sync_playwright
+
+from column_schema import to_csv_storage
 
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -415,7 +416,7 @@ def download(args):
             browser.close()
 
     df = pd.DataFrame(all_rows, columns=OUTPUT_COLUMNS)
-    df.to_csv(output_path, index=False, encoding='utf-8-sig')
+    to_csv_storage(df, output_path, index=False, encoding='utf-8-sig')
     print(f'Wrote {len(df)} rows to {output_path}')
     return output_path
 

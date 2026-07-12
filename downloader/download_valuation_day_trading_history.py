@@ -60,12 +60,6 @@ DAY_TRADING_COLUMNS = [
     'DayTradingVolume',
     'DayTradingBuyAmount',
     'DayTradingSellAmount',
-    'MarketVolumeRatio',
-    'MarketBuyAmountRatio',
-    'MarketSellAmountRatio',
-    'TotalVolume',
-    'TotalBuyAmount',
-    'TotalSellAmount',
 ]
 
 
@@ -106,6 +100,16 @@ def format_yyyymmdd(value):
     return value.strftime('%Y%m%d')
 
 
+def yyyymmdd_to_iso(value):
+    text = str(value or '').strip().replace('/', '').replace('-', '')
+    if len(text) == 8 and text.isdigit():
+        return f'{text[:4]}-{text[4:6]}-{text[6:8]}'
+    if len(text) == 7 and text.isdigit():
+        year = int(text[:3]) + 1911
+        return f'{year:04d}-{text[3:5]}-{text[5:7]}'
+    return str(value or '').strip()
+
+
 def iter_weekdays(start_date, end_date):
     current = start_date
     while current <= end_date:
@@ -130,7 +134,7 @@ def is_listed_common_code(code, listed_codes):
 
 def ensure_output_dir(name):
     if name == 'valuation':
-        output_dir = os.path.join(PROJECT_ROOT, 'data', 'dividend_pe_pb')
+        output_dir = os.path.join(PROJECT_ROOT, 'data', 'yield_pe_pb')
     else:
         output_dir = os.path.join(PROJECT_ROOT, 'data', 'day_trading')
     os.makedirs(output_dir, exist_ok=True)
@@ -211,7 +215,7 @@ def parse_valuation_payload(payload, query_date, listed_codes):
         return []
 
     fields = payload.get('fields') or []
-    row_date = payload.get('date') or format_yyyymmdd(query_date)
+    row_date = yyyymmdd_to_iso(payload.get('date') or format_yyyymmdd(query_date))
     rows = []
     for raw in payload.get('data') or []:
         if len(raw) < 5:
@@ -266,7 +270,7 @@ def parse_day_trading_payload(payload, query_date, listed_codes):
     if table is None:
         return []
 
-    row_date = payload.get('date') or format_yyyymmdd(query_date)
+    row_date = yyyymmdd_to_iso(payload.get('date') or format_yyyymmdd(query_date))
     rows = []
     for raw in table.get('data') or []:
         if len(raw) < 6:
@@ -283,12 +287,6 @@ def parse_day_trading_payload(payload, query_date, listed_codes):
             'DayTradingVolume': '',
             'DayTradingBuyAmount': '',
             'DayTradingSellAmount': '',
-            'MarketVolumeRatio': '',
-            'MarketBuyAmountRatio': '',
-            'MarketSellAmountRatio': '',
-            'TotalVolume': '',
-            'TotalBuyAmount': '',
-            'TotalSellAmount': '',
         }
         if len(raw) == 6:
             row.update({
@@ -302,12 +300,6 @@ def parse_day_trading_payload(payload, query_date, listed_codes):
                 'DayTradingVolume': clean_number(raw[2]),
                 'DayTradingBuyAmount': clean_number(raw[3]),
                 'DayTradingSellAmount': clean_number(raw[4]),
-                'MarketVolumeRatio': clean_number(raw[5]),
-                'MarketBuyAmountRatio': clean_number(raw[6]),
-                'MarketSellAmountRatio': clean_number(raw[7]),
-                'TotalVolume': clean_number(raw[8]),
-                'TotalBuyAmount': clean_number(raw[9]),
-                'TotalSellAmount': clean_number(raw[10]),
             })
         rows.append(row)
     return rows

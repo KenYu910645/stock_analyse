@@ -14,10 +14,13 @@ from datetime import date
 import pandas as pd
 import requests
 
+from column_schema import read_csv_canonical, to_csv_storage
+
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 DATA_DIR = os.path.join(PROJECT_ROOT, 'data')
 OUTPUT_DIR = os.path.join(DATA_DIR, 'report')
+LOG_DIR = os.path.join(PROJECT_ROOT, 'logs', 'report')
 
 MOPSFIN_BASE_URL = 'https://mopsfin.twse.com.tw'
 MOPSFIN_REPORT_URL = f'{MOPSFIN_BASE_URL}/compare/report'
@@ -148,11 +151,20 @@ def validate_args(args):
         raise ValueError('max-stocks must be greater than zero.')
 
 
-def get_output_path(stock_code):
+def safe_filename_part(value):
+    '''
+    Return a filesystem-safe filename component.
+    '''
+    return re.sub(r'[<>:"/\\|?*\x00-\x1f\s]+', '_', str(value)).strip('._ ')
+
+
+def get_output_path(stock_code, stock_name=''):
     '''
     Return the normalized per-stock report CSV path.
     '''
-    return os.path.join(OUTPUT_DIR, f'{stock_code}.csv')
+    safe_name = safe_filename_part(stock_name)
+    filename = f'{stock_code}_{safe_name}.csv' if safe_name else f'{stock_code}.csv'
+    return os.path.join(OUTPUT_DIR, filename)
 
 
 def load_twse_stock_catalog(metadata_path, max_stocks=None):
@@ -162,7 +174,7 @@ def load_twse_stock_catalog(metadata_path, max_stocks=None):
     if not os.path.exists(metadata_path):
         raise FileNotFoundError(f'Stock metadata CSV does not exist: {metadata_path}')
 
-    df = pd.read_csv(metadata_path, dtype={'Code': str})
+    df = read_csv_canonical(metadata_path, dtype={'Code': str})
     required_columns = {'Code', 'Name', 'Market'}
     missing_columns = required_columns - set(df.columns)
     if missing_columns:
@@ -461,8 +473,8 @@ def write_failures(failures, stock_code):
     if not failures:
         return None
 
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    failure_path = os.path.join(OUTPUT_DIR, f'{stock_code}_failures.csv')
+    os.makedirs(LOG_DIR, exist_ok=True)
+    failure_path = os.path.join(LOG_DIR, f'{stock_code}_failures.csv')
     pd.DataFrame(failures).to_csv(failure_path, index=False, encoding='utf-8-sig')
     return failure_path
 
@@ -473,7 +485,7 @@ def write_stock_report(output_path, rows):
     '''
     df = pd.DataFrame(rows, columns=OUTPUT_COLUMNS)
     df = df.sort_values(['Year', 'Quarter', 'Statement', 'Account']).reset_index(drop=True)
-    df.to_csv(output_path, index=False, encoding='utf-8-sig')
+    to_csv_storage(df, output_path, index=False, encoding='utf-8-sig')
     return len(df)
 
 
@@ -481,7 +493,7 @@ def run_single_stock(args):
     '''
     Download reports for one stock.
     '''
-    output_path = get_output_path(args.stock)
+    output_path = get_output_path(args.stock, args.name)
 
     if os.path.exists(output_path) and not args.force:
         print(f'Output already exists: {output_path}')
@@ -525,7 +537,7 @@ def run_all_stocks(args):
     print(f'Preparing to download reports for {len(stocks)} stocks.')
 
     for index, (stock_code, stock_name) in enumerate(stocks, start=1):
-        output_path = get_output_path(stock_code)
+        output_path = get_output_path(stock_code, stock_name)
 
         if os.path.exists(output_path) and not args.force:
             skipped += 1

@@ -19,22 +19,24 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from column_schema import read_csv_canonical
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-DEFAULT_PRICE_DIR = PROJECT_ROOT / "data" / "adj_price"
-DEFAULT_TAIEX_PATH = PROJECT_ROOT / "data" / "price" / "TAIEX_202001_to_202606.csv"
+DEFAULT_PRICE_DIR = PROJECT_ROOT / "data" / "price"
+DEFAULT_TAIEX_PATH = PROJECT_ROOT / "data" / "price" / "TAIEX_發行量加權股價指數.csv"
 DEFAULT_METADATA_PATH = PROJECT_ROOT / "data" / "metadata.csv"
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "output" / "regime" / "absolute"
-DEFAULT_BETA_OUTPUT_DIR = PROJECT_ROOT / "output" / "regime" / "taiex_beta"
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "data_viz" / "regime" / "absolute"
+DEFAULT_BETA_OUTPUT_DIR = PROJECT_ROOT / "data_viz" / "regime" / "taiex_beta"
 
 COMMON_STOCK_TYPE = "\u80a1\u7968"
 TWSE_MARKET = "\u4e0a\u5e02"
 REQUIRED_PRICE_COLUMNS = [
     "Date",
-    "Open_adj",
-    "High_adj",
-    "Low_adj",
-    "Close_adj",
+    "open_adj",
+    "high_adj",
+    "low_adj",
+    "close_adj",
     "Capacity",
 ]
 PLOTLY_CDN = "https://cdn.plot.ly/plotly-2.35.2.min.js"
@@ -100,7 +102,7 @@ def safe_filename(value: str) -> str:
 
 
 def load_listed_common_metadata(metadata_path: Path) -> pd.DataFrame:
-    metadata_df = pd.read_csv(metadata_path, dtype={"Code": str})
+    metadata_df = read_csv_canonical(metadata_path, dtype={"Code": str})
     required = {"Code", "Name", "Type", "Market", "Group"}
     missing = required - set(metadata_df.columns)
     if missing:
@@ -118,7 +120,9 @@ def load_listed_common_metadata(metadata_path: Path) -> pd.DataFrame:
 
 def latest_price_csvs(price_dir: Path) -> dict[str, Path]:
     latest_by_code: dict[str, Path] = {}
-    for csv_path in sorted(price_dir.glob("*_to_*.csv")):
+    for csv_path in sorted(price_dir.glob("*.csv")):
+        if csv_path.name.startswith("twse_price_"):
+            continue
         code = stock_code_from_path(csv_path)
         current = latest_by_code.get(code)
         if current is None or csv_path.name > current.name:
@@ -127,15 +131,33 @@ def latest_price_csvs(price_dir: Path) -> dict[str, Path]:
 
 
 def clean_price_csv(csv_path: Path) -> pd.DataFrame:
-    df = pd.read_csv(csv_path)
+    df = read_csv_canonical(csv_path)
     missing = [column for column in REQUIRED_PRICE_COLUMNS if column not in df.columns]
+    if missing and {"Open_adj", "High_adj", "Low_adj", "Close_adj"}.issubset(df.columns):
+        df = df.rename(
+            columns={
+                "Open_adj": "open_adj",
+                "High_adj": "high_adj",
+                "Low_adj": "low_adj",
+                "Close_adj": "close_adj",
+            }
+        )
+        missing = [column for column in REQUIRED_PRICE_COLUMNS if column not in df.columns]
     if missing:
         raise ValueError(f"{csv_path.name} missing columns: {missing}")
 
     df = df[REQUIRED_PRICE_COLUMNS].copy()
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-    for column in ["Open_adj", "High_adj", "Low_adj", "Close_adj", "Capacity"]:
+    for column in ["open_adj", "high_adj", "low_adj", "close_adj", "Capacity"]:
         df[column] = pd.to_numeric(df[column], errors="coerce")
+    df = df.rename(
+        columns={
+            "open_adj": "Open_adj",
+            "high_adj": "High_adj",
+            "low_adj": "Low_adj",
+            "close_adj": "Close_adj",
+        }
+    )
 
     return (
         df.dropna(subset=["Date", "Open_adj", "High_adj", "Low_adj", "Close_adj"])
@@ -146,7 +168,7 @@ def clean_price_csv(csv_path: Path) -> pd.DataFrame:
 
 
 def clean_taiex_csv(csv_path: Path) -> pd.DataFrame:
-    df = pd.read_csv(csv_path)
+    df = read_csv_canonical(csv_path)
     required_columns = ["Date", "Open", "High", "Low", "Close"]
     missing = [column for column in required_columns if column not in df.columns]
     if missing:

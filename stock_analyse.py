@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from column_schema import read_csv_canonical
+
 
 DATA_DIR = Path('./data')
 PRICE_DIR = DATA_DIR / 'price'
@@ -15,13 +17,13 @@ METADATA_PATH = DATA_DIR / 'metadata.csv'
 RESULT_PATH = Path('./statistic.txt')
 RESULT_CSV_PATH = Path('./statistic.csv')
 RESULT_XLSX_PATH = Path('./statistic.xlsx')
-CSV_PATTERN = '*_202005_to_*.csv'
+CSV_PATTERN = '*.csv'
 REQUIRED_COLUMNS = ['Date', 'Close', 'Change', 'Turnover']
 
 
 def get_stock_code(csv_path):
     '''
-    Extract stock code from filenames like 2308_202005_to_202605.csv.
+    Extract stock code from filenames like 2308_台達電.csv.
     '''
     return csv_path.stem.split('_')[0]
 
@@ -33,7 +35,7 @@ def load_metadata():
     if not METADATA_PATH.exists():
         return pd.DataFrame()
 
-    metadata_df = pd.read_csv(METADATA_PATH, dtype={'Code': str})
+    metadata_df = read_csv_canonical(METADATA_PATH, dtype={'Code': str})
     if 'Code' not in metadata_df.columns:
         return pd.DataFrame()
 
@@ -63,7 +65,7 @@ def read_stock_csv(csv_path):
     if csv_path.stat().st_size <= 100:
         raise ValueError('file too small or empty')
 
-    df_stock = pd.read_csv(csv_path)
+    df_stock = read_csv_canonical(csv_path)
     missing_columns = [
         column for column in REQUIRED_COLUMNS
         if column not in df_stock.columns
@@ -132,14 +134,30 @@ def analyze_stock(csv_path, metadata_df):
     return row
 
 
-def get_latest_csv_by_stock():
+def get_latest_csv_by_stock(metadata_df):
     '''
-    Return the newest cached CSV path for each stock code.
+    Return the newest cached CSV path for each listed common-stock code.
     '''
+    required_columns = {'Code', 'Type', 'Market'}
+    missing_columns = required_columns.difference(metadata_df.columns)
+    if missing_columns:
+        raise ValueError(
+            f'{METADATA_PATH} missing required columns: {sorted(missing_columns)}'
+        )
+    listed_codes = set(
+        metadata_df.loc[
+            metadata_df['Type'].eq('股票')
+            & metadata_df['Market'].eq('上市')
+            & metadata_df['Code'].astype(str).str.fullmatch(r'\d{4}'),
+            'Code',
+        ].astype(str)
+    )
     latest_csv_by_stock = {}
 
     for csv_path in sorted(PRICE_DIR.glob(CSV_PATTERN)):
         stock_code = get_stock_code(csv_path)
+        if stock_code not in listed_codes:
+            continue
         current_path = latest_csv_by_stock.get(stock_code)
         if current_path is None or csv_path.name > current_path.name:
             latest_csv_by_stock[stock_code] = csv_path
@@ -340,7 +358,7 @@ def main():
     rows = []
     skipped_reasons = Counter()
 
-    for csv_path in get_latest_csv_by_stock().values():
+    for csv_path in get_latest_csv_by_stock(metadata_df).values():
         try:
             rows.append(analyze_stock(csv_path, metadata_df))
         except Exception as exc:
